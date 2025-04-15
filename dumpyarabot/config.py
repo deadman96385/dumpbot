@@ -9,9 +9,9 @@ class Settings(BaseSettings):
     JENKINS_USER_NAME: str
     JENKINS_USER_TOKEN: str
 
-    SUDO_USERS: list[int] = []
+    REVIEW_CHAT_ID: int
+    REQUEST_CHAT_ID: int
 
-    ALLOWED_CHATS: list[int]
     model_config = SettingsConfigDict(env_file=".env")
 
 
