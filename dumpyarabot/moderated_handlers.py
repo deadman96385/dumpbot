@@ -14,24 +14,14 @@ from dumpyarabot.config import (CALLBACK_ACCEPT, CALLBACK_REJECT,
 from dumpyarabot.storage import ReviewStorage
 from dumpyarabot.ui import (ACCEPTANCE_TEMPLATE, REJECTION_TEMPLATE,
                             REVIEW_TEMPLATE, SUBMISSION_TEMPLATE,
-                            create_options_keyboard, create_review_keyboard)
+                            create_options_keyboard, create_review_keyboard,
+                            create_submission_keyboard)
 
 console = Console()
 
 
 async def _cleanup_request(context: ContextTypes.DEFAULT_TYPE, request_id: str) -> None:
-    """Clean up a processed request - delete submission message and remove from storage."""
-    pending_review = ReviewStorage.get_pending_review(context, request_id)
-
-    if pending_review and pending_review.submission_confirmation_message_id:
-        try:
-            await context.bot.delete_message(
-                chat_id=pending_review.original_chat_id,
-                message_id=pending_review.submission_confirmation_message_id,
-            )
-        except Exception as e:
-            console.print(f"[yellow]Could not delete submission message: {e}[/yellow]")
-
+    """Clean up a processed request - remove from storage but keep submission message for status updates."""
     ReviewStorage.remove_pending_review(context, request_id)
     ReviewStorage.remove_options_state(context, request_id)
 
@@ -53,9 +43,11 @@ async def handle_request_message(
         console.print(f"[yellow]Message from non-request chat: {chat.id}[/yellow]")
         return
 
-    # 2. Parse message for "#request <URL>" pattern
-    request_pattern = r"#request\s+(https?://[^\s]+)"
-    match = re.search(request_pattern, message.text or "", re.IGNORECASE)
+    # 2. Parse message for "#request <URL>" pattern (flexible format)
+    # Supports: "#requesthttps://...", "#request https://...", "#request please https://...", etc.
+    # DOTALL flag allows . to match newlines for multi-line messages
+    request_pattern = r"#request\s*.*?(https?://[^\s]+)"
+    match = re.search(request_pattern, message.text or "", re.IGNORECASE | re.DOTALL)
 
     if not match:
         console.print("[yellow]No valid #request pattern found[/yellow]")
@@ -149,6 +141,8 @@ async def handle_callback_query(
         await _handle_toggle_callback(query, context, callback_data, "alt")
     elif callback_data.startswith(CALLBACK_TOGGLE_FORCE):
         await _handle_toggle_callback(query, context, callback_data, "force")
+    elif callback_data.startswith(CALLBACK_CANCEL_REQUEST):
+        await _handle_cancel_callback(query, context, callback_data)
     elif callback_data.startswith(CALLBACK_SUBMIT_ACCEPTANCE):
         await _handle_submit_callback(query, context, callback_data)
 
@@ -474,3 +468,49 @@ async def reject_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     # Clean up request data and submission message
     await _cleanup_request(context, request_id)
+
+
+async def _handle_cancel_callback(
+    query: Any, context: ContextTypes.DEFAULT_TYPE, callback_data: str
+) -> None:
+    """Handle cancel request callback."""
+    request_id = callback_data.replace(CALLBACK_CANCEL_REQUEST, "")
+    
+    if not query.message:
+        return
+        
+    storage = ReviewStorage(context.bot_data)
+    pending = storage.get_pending_review(request_id)
+    
+    if not pending:
+        await query.edit_message_text(
+            text="❌ Request not found or already processed",
+            reply_markup=None
+        )
+        return
+    
+    try:
+        # Send cancellation message in review chat
+        await context.bot.send_message(
+            chat_id=pending.review_chat_id,
+            text=f"🚫 Request {request_id} cancelled by user @{pending.requester_username}"
+        )
+        
+        # Update submission confirmation message to show cancelled
+        await query.edit_message_text(
+            text="🚫 Request cancelled",
+            reply_markup=None
+        )
+        
+        # Clean up request data
+        await _cleanup_request(context, request_id)
+        
+        console.print(f"[yellow]Request {request_id} cancelled by user[/yellow]")
+        
+    except Exception as e:
+        console.print(f"[red]Error cancelling request: {e}[/red]")
+        console.print_exception()
+        await query.edit_message_text(
+            text="❌ Error cancelling request",
+            reply_markup=None
+        )

@@ -10,6 +10,7 @@ CALLBACK_TOGGLE_FORCE = "toggle_force_"
 CALLBACK_TOGGLE_BLACKLIST = "toggle_blacklist_"
 CALLBACK_TOGGLE_PRIVDUMP = "toggle_privdump_"
 CALLBACK_SUBMIT_ACCEPTANCE = "submit_accept_"
+CALLBACK_CANCEL_REQUEST = "cancel_req_"
 
 
 # Message Templates
@@ -22,7 +23,7 @@ REVIEW_TEMPLATE = (
 
 
 def create_review_keyboard(request_id: str) -> InlineKeyboardMarkup:
-    """Create Accept/Reject buttons with callback data."""
+    """Create Accept/Reject/Cancel buttons with callback data."""
     keyboard = [
         [
             InlineKeyboardButton(
@@ -31,6 +32,11 @@ def create_review_keyboard(request_id: str) -> InlineKeyboardMarkup:
             InlineKeyboardButton(
                 "❌ Reject", callback_data=f"{CALLBACK_REJECT}{request_id}"
             ),
+        ],
+        [
+            InlineKeyboardButton(
+                "🚫 Cancel Request", callback_data=f"{CALLBACK_CANCEL_REQUEST}{request_id}"
+            )
         ]
     ]
     return InlineKeyboardMarkup(keyboard)
@@ -61,5 +67,17 @@ def create_options_keyboard(
                 "🚀 Submit", callback_data=f"{CALLBACK_SUBMIT_ACCEPTANCE}{request_id}"
             )
         ],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+
+def create_submission_keyboard(request_id: str) -> InlineKeyboardMarkup:
+    """Create Cancel button for submission confirmation message."""
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                "❌ Cancel Request", callback_data=f"{CALLBACK_CANCEL_REQUEST}{request_id}"
+            )
+        ]
     ]
     return InlineKeyboardMarkup(keyboard)
