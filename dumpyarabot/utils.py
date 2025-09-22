@@ -1,3 +1,4 @@
+import secrets
 from typing import List, Tuple
 
 import httpx
@@ -7,6 +8,11 @@ from dumpyarabot import schemas
 from dumpyarabot.config import settings
 
 console = Console()
+
+
+def generate_request_id() -> str:
+    """Generate a unique request ID."""
+    return secrets.token_hex(4)  # 8-character hex string
 
 
 async def get_jenkins_builds(job_name: str) -> List[schemas.JenkinsBuild]:
