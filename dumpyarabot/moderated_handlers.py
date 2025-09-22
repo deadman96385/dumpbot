@@ -7,10 +7,10 @@ from telegram import Chat, Message, Update
 from telegram.ext import ContextTypes
 
 from dumpyarabot import schemas, utils
-from dumpyarabot.config import (CALLBACK_ACCEPT, CALLBACK_REJECT,
-                                CALLBACK_SUBMIT_ACCEPTANCE,
+from dumpyarabot.config import (CALLBACK_ACCEPT, CALLBACK_CANCEL_REQUEST,
+                                CALLBACK_REJECT, CALLBACK_SUBMIT_ACCEPTANCE,
                                 CALLBACK_TOGGLE_ALT, CALLBACK_TOGGLE_FORCE,
-                                settings)
+                                CALLBACK_TOGGLE_PRIVDUMP, settings)
 from dumpyarabot.storage import ReviewStorage
 from dumpyarabot.ui import (ACCEPTANCE_TEMPLATE, REJECTION_TEMPLATE,
                             REVIEW_TEMPLATE, SUBMISSION_TEMPLATE,
@@ -204,6 +204,8 @@ async def _handle_toggle_callback(
         options_state.alt = not options_state.alt
     elif option == "force":
         options_state.force = not options_state.force
+    elif option == "privdump":
+        options_state.privdump = not options_state.privdump
 
     ReviewStorage.update_options_state(context, request_id, options_state)
 
@@ -234,6 +236,7 @@ async def _handle_submit_callback(
             add_blacklist=False,
             use_privdump=options_state.privdump,
             initial_message_id=pending_review.original_message_id,
+            initial_chat_id=pending_review.original_chat_id,
         )
 
         # Start dump process using existing logic
@@ -246,7 +249,7 @@ async def _handle_submit_callback(
                 )
                 # Notify original requester with user-friendly message
                 if options_state.privdump:
-                    user_message = f"{ACCEPTANCE_TEMPLATE}\nYour request is under further review for private processing."
+                    user_message = "Your request is under further review for private processing."
                 else:
                     user_message = f"{ACCEPTANCE_TEMPLATE}\n{status_message}"
                 await context.bot.send_message(
@@ -266,11 +269,11 @@ async def _handle_submit_callback(
         response_text = await utils.call_jenkins(dump_args)
         console.print(f"[green]Jenkins response: {response_text}[/green]")
 
-        # Notify original requester with user-friendly message (hide Jenkins technical details)
+        # Notify original requester with acceptance message
         if options_state.privdump:
-            user_message = f"{ACCEPTANCE_TEMPLATE}\nYour request is under further review for private processing."
+            user_message = "Your request is under further review for private processing."
         else:
-            user_message = f"{ACCEPTANCE_TEMPLATE}\nYour firmware dump is now being processed."
+            user_message = ACCEPTANCE_TEMPLATE
         
         await context.bot.send_message(
             chat_id=pending_review.original_chat_id,
@@ -316,7 +319,7 @@ async def accept_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await context.bot.send_message(
             chat_id=chat.id,
             reply_to_message_id=message.message_id,
-            text="Usage: `/accept [request_id] [options]`\nOptions: a=alt, f=force",
+            text="Usage: `/accept [request_id] [options]`\nOptions: a=alt, f=force, p=privdump",
             parse_mode="Markdown",
         )
         return
@@ -334,18 +337,20 @@ async def accept_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         return
 
-    # Parse option flags (only alt and force available in moderated system)
+    # Parse option flags
     use_alt = "a" in options
     force = "f" in options
+    use_privdump = "p" in options
 
     try:
-        # Start dump process with options (blacklist and privdump disabled in moderated system)
+        # Start dump process with options (blacklist disabled in moderated system)
         dump_args = schemas.DumpArguments(
             url=pending_review.url,
             use_alt_dumper=use_alt,
             add_blacklist=False,
-            use_privdump=False,
+            use_privdump=use_privdump,
             initial_message_id=pending_review.original_message_id,
+            initial_chat_id=pending_review.original_chat_id,
         )
 
         if not force:
@@ -362,7 +367,10 @@ async def accept_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 )
 
                 # Notify original requester with user-friendly message
-                user_message = f"{ACCEPTANCE_TEMPLATE}\n{status_message}"
+                if use_privdump:
+                    user_message = "Your request is under further review for private processing."
+                else:
+                    user_message = f"{ACCEPTANCE_TEMPLATE}\n{status_message}"
                 await context.bot.send_message(
                     chat_id=pending_review.original_chat_id,
                     text=user_message,
@@ -383,8 +391,11 @@ async def accept_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             text=f"✅ Request {request_id} accepted and {response_text}",
         )
 
-        # Notify original requester with user-friendly message (hide Jenkins technical details)
-        user_message = f"{ACCEPTANCE_TEMPLATE}\nYour firmware dump is now being processed."
+        # Notify original requester with acceptance message
+        if use_privdump:
+            user_message = "Your request is under further review for private processing."
+        else:
+            user_message = ACCEPTANCE_TEMPLATE
         await context.bot.send_message(
             chat_id=pending_review.original_chat_id,
             text=user_message,
