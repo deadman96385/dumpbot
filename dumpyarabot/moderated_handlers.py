@@ -141,6 +141,8 @@ async def handle_callback_query(
         await _handle_toggle_callback(query, context, callback_data, "alt")
     elif callback_data.startswith(CALLBACK_TOGGLE_FORCE):
         await _handle_toggle_callback(query, context, callback_data, "force")
+    elif callback_data.startswith(CALLBACK_TOGGLE_PRIVDUMP):
+        await _handle_toggle_callback(query, context, callback_data, "privdump")
     elif callback_data.startswith(CALLBACK_CANCEL_REQUEST):
         await _handle_cancel_callback(query, context, callback_data)
     elif callback_data.startswith(CALLBACK_SUBMIT_ACCEPTANCE):
@@ -225,12 +227,12 @@ async def _handle_submit_callback(
     options_state = ReviewStorage.get_options_state(context, request_id)
 
     try:
-        # Create DumpArguments with the selected options (blacklist and privdump disabled in moderated system)
+        # Create DumpArguments with the selected options (blacklist disabled in moderated system)
         dump_args = schemas.DumpArguments(
             url=pending_review.url,
             use_alt_dumper=options_state.alt,
             add_blacklist=False,
-            use_privdump=False,
+            use_privdump=options_state.privdump,
             initial_message_id=pending_review.original_message_id,
         )
 
@@ -243,7 +245,10 @@ async def _handle_submit_callback(
                     f"[yellow]Found existing build: {status_message}[/yellow]"
                 )
                 # Notify original requester with user-friendly message
-                user_message = f"{ACCEPTANCE_TEMPLATE}\n{status_message}"
+                if options_state.privdump:
+                    user_message = f"{ACCEPTANCE_TEMPLATE}\nYour request is under further review for private processing."
+                else:
+                    user_message = f"{ACCEPTANCE_TEMPLATE}\n{status_message}"
                 await context.bot.send_message(
                     chat_id=pending_review.original_chat_id,
                     text=user_message,
@@ -262,7 +267,11 @@ async def _handle_submit_callback(
         console.print(f"[green]Jenkins response: {response_text}[/green]")
 
         # Notify original requester with user-friendly message (hide Jenkins technical details)
-        user_message = f"{ACCEPTANCE_TEMPLATE}\nYour firmware dump is now being processed."
+        if options_state.privdump:
+            user_message = f"{ACCEPTANCE_TEMPLATE}\nYour request is under further review for private processing."
+        else:
+            user_message = f"{ACCEPTANCE_TEMPLATE}\nYour firmware dump is now being processed."
+        
         await context.bot.send_message(
             chat_id=pending_review.original_chat_id,
             text=user_message,

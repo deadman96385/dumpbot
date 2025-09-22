@@ -47,9 +47,10 @@ def create_options_keyboard(
 ) -> InlineKeyboardMarkup:
     """Create toggle buttons for each option + Submit button with current state checkmarks."""
 
-    # Create toggle buttons with checkmarks for enabled options (only Alt and Force)
+    # Create toggle buttons with checkmarks for enabled options
     alt_text = f"{'✅' if current_state.alt else '❌'} Alternative Dumper"
     force_text = f"{'✅' if current_state.force else '❌'} Force Re-Dump"
+    privdump_text = f"{'✅' if current_state.privdump else '❌'} Private Dump"
 
     keyboard = [
         [
@@ -60,6 +61,11 @@ def create_options_keyboard(
         [
             InlineKeyboardButton(
                 force_text, callback_data=f"{CALLBACK_TOGGLE_FORCE}{request_id}"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                privdump_text, callback_data=f"{CALLBACK_TOGGLE_PRIVDUMP}{request_id}"
             )
         ],
         [
