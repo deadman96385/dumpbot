@@ -8,6 +8,7 @@
 CHAT_ID="-1001412293127"
 
 [[ -z ${INITIAL_MESSAGE_ID} ]] && START_MESSAGE_ID="" || START_MESSAGE_ID="${INITIAL_MESSAGE_ID}"
+[[ -z ${INITIAL_CHAT_ID} ]] && REPLY_CHAT_ID="" || REPLY_CHAT_ID="${INITIAL_CHAT_ID}"
 
 # usage: normal - sendTg normal "message to send"
 #        reply  - sendTg reply message_id "reply to send"
@@ -20,7 +21,13 @@ sendTG() {
         curl --compressed -s "${api_url}/sendmessage" --data "text=$(urlEncode "${*:?Error: Missing message text.}")&chat_id=${CHAT_ID:?}&parse_mode=HTML&disable_web_page_preview=True"
     elif [[ ${mode} =~ reply ]]; then
         local message_id="${1:?Error: Missing message id for reply.}" && shift
-        curl --compressed -s "${api_url}/sendmessage" --data "text=$(urlEncode "${*:?Error: Missing message text.}")&chat_id=${CHAT_ID:?}&parse_mode=HTML&reply_to_message_id=${message_id}&disable_web_page_preview=True"
+        if [[ -n "${REPLY_CHAT_ID}" ]]; then
+            # Use reply_parameters for cross-chat reply
+            curl --compressed -s "${api_url}/sendmessage" --data "text=$(urlEncode "${*:?Error: Missing message text.}")&chat_id=${CHAT_ID:?}&parse_mode=HTML&reply_parameters=$(urlEncode "{\"message_id\":${message_id},\"chat_id\":${REPLY_CHAT_ID}}")&disable_web_page_preview=True"
+        else
+            # Use regular reply_to_message_id for same-chat reply
+            curl --compressed -s "${api_url}/sendmessage" --data "text=$(urlEncode "${*:?Error: Missing message text.}")&chat_id=${CHAT_ID:?}&parse_mode=HTML&reply_to_message_id=${message_id}&disable_web_page_preview=True"
+        fi
     elif [[ ${mode} =~ edit ]]; then
         local message_id="${1:?Error: Missing message id for edit.}" && shift
         curl --compressed -s "${api_url}/editMessageText" --data "text=$(urlEncode "${*:?Error: Missing message text.}")&chat_id=${CHAT_ID:?}&parse_mode=HTML&message_id=${message_id}&disable_web_page_preview=True"

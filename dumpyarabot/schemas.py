@@ -15,6 +15,7 @@ class DumpArguments(BaseModel):
     add_blacklist: bool
     use_privdump: bool
     initial_message_id: Optional[int] = None
+    initial_chat_id: Optional[int] = None
 
 
 class PendingReview(BaseModel):

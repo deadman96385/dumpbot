@@ -54,6 +54,8 @@ def _is_matching_build(
                 and params.get("ADD_BLACKLIST") == args.add_blacklist
             ):
                 console.print("[green]Found matching build parameters[/green]")
+                console.print(f"[blue]Build params: {params}[/blue]")
+                console.print(f"[blue]Looking for: URL={args.url.unicode_string()}, ALT={args.use_alt_dumper}, BLACKLIST={args.add_blacklist}, PRIVDUMP={args.use_privdump}[/blue]")
                 return matches
     return False
 
@@ -116,6 +118,7 @@ async def call_jenkins(args: schemas.DumpArguments) -> str:
                     "USE_ALT_DUMPER": args.use_alt_dumper,
                     "ADD_BLACKLIST": args.add_blacklist,
                     "INITIAL_MESSAGE_ID": args.initial_message_id,
+                    "INITIAL_CHAT_ID": args.initial_chat_id,
                 },
                 auth=(settings.JENKINS_USER_NAME, settings.JENKINS_USER_TOKEN),
             )
