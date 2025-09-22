@@ -6,3 +6,4 @@
 venv/
 *.session*
 .env
+.claude/
