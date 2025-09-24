@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379/0"
     REDIS_KEY_PREFIX: str = "dumpyarabot:"
 
+    # Gemini AI configuration for log analysis
+    GEMINI_API_KEY: str | None = None
+
     model_config = SettingsConfigDict(env_file=".env")
 
 
