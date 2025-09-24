@@ -7,6 +7,7 @@ from telegram.ext import ContextTypes
 
 from dumpyarabot import schemas, utils
 from dumpyarabot.config import settings
+from dumpyarabot.gemini_analyzer import analyzer
 
 console = Console()
 
@@ -461,5 +462,168 @@ async def handle_restart_callback(update: Update, context: ContextTypes.DEFAULT_
             f"👤 **Cancelled by:** {user.mention_markdown()}\n"
             f"✅ **Status:** Bot restart was cancelled. Bot continues running normally.",
             parse_mode="Markdown"
+        )
+
+
+async def analyze(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Handler for the /analyze command - analyze Jenkins console logs with AI."""
+    chat: Optional[Chat] = update.effective_chat
+    message: Optional[Message] = update.effective_message
+
+    if not chat or not message:
+        console.print("[red]Chat or message object is None[/red]")
+        return
+
+    # Ensure it can only be used in allowed chats
+    if chat.id not in settings.ALLOWED_CHATS:
+        return
+
+    # Check if user is admin
+    try:
+        chat_member = await context.bot.get_chat_member(chat_id=chat.id, user_id=message.from_user.id)
+        if chat_member.status not in ["administrator", "creator"]:
+            await context.bot.send_message(
+                chat_id=chat.id,
+                reply_to_message_id=message.message_id,
+                text="❌ This command is restricted to chat administrators.",
+            )
+            return
+    except Exception as e:
+        console.print(f"[red]Error checking admin status: {e}[/red]")
+        await context.bot.send_message(
+            chat_id=chat.id,
+            reply_to_message_id=message.message_id,
+            text="❌ Error checking admin permissions.",
+        )
+        return
+
+    # Check if Gemini analyzer is available
+    if not analyzer.is_available():
+        await context.bot.send_message(
+            chat_id=chat.id,
+            reply_to_message_id=message.message_id,
+            text="❌ Gemini AI analyzer is not configured. Set GEMINI_API_KEY environment variable.",
+            parse_mode="HTML"
+        )
+        return
+
+    # Ensure we have arguments passed
+    if not context.args or len(context.args) < 2:
+        usage = (
+            "Usage: `/analyze [job_name] [build_number]`\n\n"
+            "Example: `/analyze dumpyara 123`\n"
+            "         `/analyze privdump 456`"
+        )
+        await context.bot.send_message(
+            chat_id=chat.id,
+            reply_to_message_id=message.message_id,
+            text=usage,
+            parse_mode="Markdown",
+        )
+        return
+
+    job_name = context.args[0].lower()
+    build_number = context.args[1]
+
+    # Validate job name
+    if job_name not in ["dumpyara", "privdump"]:
+        await context.bot.send_message(
+            chat_id=chat.id,
+            reply_to_message_id=message.message_id,
+            text="❌ Invalid job name. Use 'dumpyara' or 'privdump'.",
+        )
+        return
+
+    # Validate build number
+    try:
+        int(build_number)
+    except ValueError:
+        await context.bot.send_message(
+            chat_id=chat.id,
+            reply_to_message_id=message.message_id,
+            text="❌ Invalid build number. Must be a number.",
+        )
+        return
+
+    console.print(f"[green]Analyze request: {job_name} #{build_number}[/green]")
+
+    # Send initial status message
+    status_message = await context.bot.send_message(
+        chat_id=chat.id,
+        reply_to_message_id=message.message_id,
+        text=f"🔍 **Analyzing Jenkins log...**\n\nJob: `{job_name}`\nBuild: `#{build_number}`\n\n⏳ Fetching console log...",
+        parse_mode="Markdown",
+    )
+
+    try:
+        # Fetch Jenkins console log
+        console_log = await utils.get_jenkins_console_log(job_name, build_number)
+
+        # Update status
+        await context.bot.edit_message_text(
+            chat_id=chat.id,
+            message_id=status_message.message_id,
+            text=f"🔍 **Analyzing Jenkins log...**\n\nJob: `{job_name}`\nBuild: `#{build_number}`\n\n🤖 Running AI analysis...",
+            parse_mode="Markdown",
+        )
+
+        # Build info for analysis context
+        build_info = {
+            "job_name": job_name,
+            "build_number": build_number,
+            "build_url": f"{settings.JENKINS_URL}/job/{job_name}/{build_number}/",
+        }
+
+        # Run AI analysis
+        analysis = await analyzer.analyze_jenkins_log(console_log, build_info)
+
+        if analysis:
+            # Format analysis for Telegram
+            formatted_analysis = analyzer.format_analysis_for_telegram(
+                analysis, build_info["build_url"]
+            )
+
+            # Update the status message with results
+            await context.bot.edit_message_text(
+                chat_id=chat.id,
+                message_id=status_message.message_id,
+                text=f"🔍 **AI Analysis Complete**\n\nJob: `{job_name}`\nBuild: `#{build_number}`\n\n{formatted_analysis}",
+                parse_mode="Markdown",
+                disable_web_page_preview=True,
+            )
+
+            console.print(f"[green]Successfully analyzed {job_name} #{build_number}[/green]")
+
+        else:
+            # Analysis failed
+            await context.bot.edit_message_text(
+                chat_id=chat.id,
+                message_id=status_message.message_id,
+                text=f"❌ **Analysis Failed**\n\nJob: `{job_name}`\nBuild: `#{build_number}`\n\n"
+                     f"The AI analysis could not be completed. The console log may be too short or the AI service may be unavailable.\n\n"
+                     f"📊 <a href=\"{build_info['build_url']}\">View Build Details</a>",
+                parse_mode="HTML",
+            )
+
+    except Exception as e:
+        console.print(f"[red]Error analyzing Jenkins log: {e}[/red]")
+
+        # Update status with error
+        error_message = str(e)
+        if "404" in error_message:
+            error_text = f"❌ **Build Not Found**\n\nJob: `{job_name}`\nBuild: `#{build_number}`\n\nThe specified build does not exist."
+        elif "403" in error_message or "401" in error_message:
+            error_text = f"❌ **Access Denied**\n\nJob: `{job_name}`\nBuild: `#{build_number}`\n\nCheck Jenkins credentials."
+        else:
+            error_text = f"❌ **Analysis Error**\n\nJob: `{job_name}`\nBuild: `#{build_number}`\n\nError: {error_message}"
+
+        await context.bot.edit_message_text(
+            chat_id=chat.id,
+            message_id=status_message.message_id,
+            text=error_text,
+            parse_mode="Markdown",
         )
 

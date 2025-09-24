@@ -54,7 +54,8 @@ INTERNAL_COMMANDS = [
 ]
 
 ADMIN_COMMANDS = [
-    ("restart", "Restart the bot")
+    ("restart", "Restart the bot"),
+    ("analyze", "Analyze Jenkins console log with AI")
 ]
 
 EMPTY_COMMANDS = []
