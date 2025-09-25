@@ -75,6 +75,80 @@ sendTG_edit_wrapper() {
     esac
 }
 
+# Analyze Jenkins console log with Gemini AI
+analyze_jenkins_log() {
+    # Check if GEMINI_API_KEY is set and if we have access to Python
+    if [[ -z "${GEMINI_API_KEY}" ]] || ! command -v python3 &> /dev/null; then
+        echo "[INFO] Gemini AI log analysis not available (missing API key or Python)"
+        return 1
+    fi
+
+    echo "[INFO] Fetching Jenkins console log for analysis..."
+
+    # Fetch console log from Jenkins (use authentication if available)
+    local console_log
+    if [[ -n "${JENKINS_USER}" ]] && [[ -n "${JENKINS_TOKEN}" ]]; then
+        console_log=$(curl -s -u "${JENKINS_USER}:${JENKINS_TOKEN}" "${BUILD_URL}consoleText")
+    else
+        console_log=$(curl -s "${BUILD_URL}consoleText")
+    fi
+
+    # Check if we got a valid log
+    if [[ -z "${console_log}" ]] || [[ ${#console_log} -lt 100 ]]; then
+        echo "[ERROR] Failed to fetch console log or log too short"
+        return 1
+    fi
+
+    echo "[INFO] Analyzing console log with Gemini AI..."
+
+    # Create temporary Python script for analysis
+    local analysis_script="/tmp/analyze_jenkins_log_$$.py"
+    cat > "${analysis_script}" << 'EOF'
+import sys
+import os
+import asyncio
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from dumpyarabot.gemini_analyzer import analyzer
+
+async def main():
+    console_log = sys.stdin.read()
+    build_info = {
+        "job_name": os.environ.get("JOB_NAME", ""),
+        "build_number": os.environ.get("BUILD_ID", ""),
+        "build_url": os.environ.get("BUILD_URL", ""),
+        "url": os.environ.get("URL", "")
+    }
+
+    analysis = await analyzer.analyze_jenkins_log(console_log, build_info)
+    if analysis:
+        formatted = analyzer.format_analysis_for_telegram(analysis, build_info.get("build_url", ""))
+        print(formatted)
+    else:
+        sys.exit(1)
+
+if __name__ == "__main__":
+    asyncio.run(main())
+EOF
+
+    # Run analysis
+    local analysis_result
+    analysis_result=$(echo "${console_log}" | python3 "${analysis_script}" 2>/dev/null)
+    local analysis_exit_code=$?
+
+    # Clean up temporary script
+    rm -f "${analysis_script}"
+
+    if [[ ${analysis_exit_code} -eq 0 ]] && [[ -n "${analysis_result}" ]]; then
+        echo "[SUCCESS] Gemini analysis completed"
+        echo "${analysis_result}"
+        return 0
+    else
+        echo "[ERROR] Gemini analysis failed"
+        return 1
+    fi
+}
+
 # Inform the user about final status of build
 terminate() {
     case ${1:?} in
@@ -84,8 +158,20 @@ terminate() {
         ;;
         ## Failure
         1)
-        local string="<b>failed!</b> (<a href=\"${BUILD_URL}\">#${BUILD_ID}</a>)
+            local string="<b>failed!</b> (<a href=\"${BUILD_URL}\">#${BUILD_ID}</a>)
 View <a href=\"${BUILD_URL}consoleText\">console logs</a> for more."
+            # Try to analyze the failure with Gemini AI
+            echo "[INFO] Attempting to analyze build failure with AI..."
+            local analysis
+            analysis=$(analyze_jenkins_log)
+            if [[ $? -eq 0 ]] && [[ -n "${analysis}" ]]; then
+                # Send analysis as a separate message to avoid telegram message limits
+                echo "[INFO] Sending AI analysis to Telegram..."
+                local analysis_header="🤖 **AI Analysis of Build Failure:**
+
+"
+                sendTG reply "${START_MESSAGE_ID}" "${analysis_header}${analysis}"
+            fi
         ;;
         ## Aborted
         2)
