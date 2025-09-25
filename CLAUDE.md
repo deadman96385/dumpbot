@@ -13,12 +13,23 @@ This is **dumpyarabot**, a Telegram bot for AndroidDumps that integrates with Je
 # Install dependencies (uses uv for faster installs)
 uv sync
 
+# Install job queue support for Telegram bot
+uv add "python-telegram-bot[job-queue]"
+
 # Run the application
 python -m dumpyarabot
 
 # Or directly
 uv run python -m dumpyarabot
 ```
+
+### Development Workflow
+**IMPORTANT**: After making any code changes, always restart the bot to ensure changes take effect:
+1. Kill any running bot processes
+2. Start a new bot instance
+3. Test the changes
+
+This is critical since the bot runs as a long-running process and won't pick up code changes until restarted.
 
 ### Code Quality
 ```bash
@@ -47,7 +58,7 @@ uv run mypy dumpyarabot/
 **`dumpyarabot/handlers.py`** - Contains the main command handlers:
 - `dump()` - Handles `/dump [URL] [options]` command for initiating firmware dumps
 - `cancel_dump()` - Handles `/cancel [job_id]` command for cancelling jobs (admin only)
-- `restart()` - Placeholder restart handler (currently disabled)
+- `restart()` - Bot restart handler with admin confirmation dialog
 
 **`dumpyarabot/moderated_handlers.py`** - Moderated request system handlers:
 - `handle_request_message()` - Processes `#request [URL]` messages from users
@@ -81,7 +92,7 @@ uv run mypy dumpyarabot/
 
 The bot uses a two-tier authorization system:
 - **Chat-level**: Only allowed chats (configured in `ALLOWED_CHATS`) can use commands
-- **User-level**: Cancel command requires Telegram admin permissions in the chat
+- **User-level**: Admin commands (cancel, restart) require Telegram admin permissions in the chat
 
 ### Jenkins Integration
 
@@ -105,7 +116,7 @@ Create `config.json` from `config.json.example` or use environment variables:
 - `REVIEW_CHAT_ID` - Chat ID where admins review and approve/reject requests
 
 **Optional:**
-- `SUDO_USERS` - JSON array of user IDs with elevated permissions
+- `REDIS_URL` - Redis connection URL for persistent storage (falls back to in-memory storage if not provided)
 
 ## Command Options
 
