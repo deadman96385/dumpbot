@@ -1,5 +1,6 @@
 import secrets
-from typing import List, Tuple
+from datetime import datetime
+from typing import List, Tuple, Optional
 
 import httpx
 from rich.console import Console
@@ -165,6 +166,61 @@ async def call_jenkins(args: schemas.DumpArguments, add_blacklist: bool = False)
         except Exception as e:
             console.print(f"[red]Failed to trigger {job_name} build: {e}[/red]")
             raise
+
+
+async def get_jenkins_console_log(job_name: str, build_number: str) -> str:
+    """Fetch Jenkins console log for a specific job and build number."""
+    console.print(f"[blue]Fetching console log for {job_name} #{build_number}[/blue]")
+
+    async with httpx.AsyncClient() as client:
+        try:
+            console_url = f"{settings.JENKINS_URL}/job/{job_name}/{build_number}/consoleText"
+            response = await client.get(
+                console_url,
+                auth=(settings.JENKINS_USER_NAME, settings.JENKINS_USER_TOKEN),
+                timeout=30.0,
+            )
+            response.raise_for_status()
+
+            console_log = response.text
+            console.print(f"[green]Successfully fetched {len(console_log)} characters of console log[/green]")
+            return console_log
+
+        except Exception as e:
+            console.print(f"[red]Failed to fetch console log: {e}[/red]")
+            raise
+
+
+async def get_jenkins_build_timestamp(job_name: str, build_number: str) -> Optional[str]:
+    """Get the build timestamp from Jenkins for a specific job and build number."""
+    console.print(f"[blue]Fetching build timestamp for {job_name} #{build_number}[/blue]")
+
+    async with httpx.AsyncClient() as client:
+        try:
+            build_url = f"{settings.JENKINS_URL}/job/{job_name}/{build_number}/api/json"
+            response = await client.get(
+                build_url,
+                params={"tree": "timestamp"},
+                auth=(settings.JENKINS_USER_NAME, settings.JENKINS_USER_TOKEN),
+                timeout=30.0,
+            )
+            response.raise_for_status()
+
+            data = response.json()
+            timestamp_ms = data.get("timestamp")
+            if timestamp_ms:
+                # Convert from milliseconds to seconds and format as readable datetime
+                timestamp_dt = datetime.fromtimestamp(timestamp_ms / 1000)
+                formatted_timestamp = timestamp_dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+                console.print(f"[green]Build timestamp: {formatted_timestamp}[/green]")
+                return formatted_timestamp
+            else:
+                console.print("[yellow]No timestamp found in build data[/yellow]")
+                return None
+
+        except Exception as e:
+            console.print(f"[red]Failed to fetch build timestamp: {e}[/red]")
+            return None
 
 
 async def cancel_jenkins_job(job_id: str, use_privdump: bool = False) -> str:

@@ -75,8 +75,6 @@ sendTG_edit_wrapper() {
     esac
 }
 
-
-
 # Inform the user about final status of build
 terminate() {
     case ${1:?} in
