@@ -7,10 +7,10 @@ CALLBACK_ACCEPT = "accept_"
 CALLBACK_REJECT = "reject_"
 CALLBACK_TOGGLE_ALT = "toggle_alt_"
 CALLBACK_TOGGLE_FORCE = "toggle_force_"
-CALLBACK_TOGGLE_BLACKLIST = "toggle_blacklist_"
 CALLBACK_TOGGLE_PRIVDUMP = "toggle_privdump_"
 CALLBACK_SUBMIT_ACCEPTANCE = "submit_accept_"
 CALLBACK_CANCEL_REQUEST = "cancel_req_"
+CALLBACK_JENKINS_CANCEL = "jenkins_cancel_"
 
 
 # Message Templates
@@ -18,7 +18,11 @@ SUBMISSION_TEMPLATE = "✅ Request submitted for review: {url}"
 ACCEPTANCE_TEMPLATE = "🎉 Your request has been accepted and processing started"
 REJECTION_TEMPLATE = "❌ Your request was rejected: {reason}"
 REVIEW_TEMPLATE = (
-    "📋 New dump request from @{username}\nURL: {url}\nRequest ID: {request_id}"
+    "📋 New dump request from @{username}\n"
+    "URL: {url}\n"
+    "Request ID: {request_id}\n\n"
+    "💬 Original message:\n"
+    "{original_message}"
 )
 
 
@@ -35,9 +39,10 @@ def create_review_keyboard(request_id: str) -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton(
-                "🚫 Cancel Request", callback_data=f"{CALLBACK_CANCEL_REQUEST}{request_id}"
+                "🚫 Cancel Request",
+                callback_data=f"{CALLBACK_CANCEL_REQUEST}{request_id}",
             )
-        ]
+        ],
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -82,7 +87,21 @@ def create_submission_keyboard(request_id: str) -> InlineKeyboardMarkup:
     keyboard = [
         [
             InlineKeyboardButton(
-                "❌ Cancel Request", callback_data=f"{CALLBACK_CANCEL_REQUEST}{request_id}"
+                "❌ Cancel Request",
+                callback_data=f"{CALLBACK_CANCEL_REQUEST}{request_id}",
+            )
+        ]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+
+def create_jenkins_cancel_keyboard(job_name: str, build_id: str) -> InlineKeyboardMarkup:
+    """Create Cancel button for Jenkins status messages."""
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                f"🛑 Cancel {job_name.title()} Job",
+                callback_data=f"{CALLBACK_JENKINS_CANCEL}{job_name}:{build_id}",
             )
         ]
     ]
