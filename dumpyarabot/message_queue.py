@@ -17,6 +17,7 @@ console = Console()
 
 class MessageType(str, Enum):
     """Types of messages that can be queued."""
+
     COMMAND_REPLY = "command_reply"
     STATUS_UPDATE = "status_update"
     NOTIFICATION = "notification"
@@ -26,14 +27,16 @@ class MessageType(str, Enum):
 
 class MessagePriority(str, Enum):
     """Message priority levels."""
-    URGENT = "urgent"     # Errors, critical notifications
-    HIGH = "high"         # Command replies, user-facing updates
-    NORMAL = "normal"     # Status updates, progress reports
-    LOW = "low"           # Background notifications, cleanup
+
+    URGENT = "urgent"  # Errors, critical notifications
+    HIGH = "high"  # Command replies, user-facing updates
+    NORMAL = "normal"  # Status updates, progress reports
+    LOW = "low"  # Background notifications, cleanup
 
 
 class QueuedMessage(BaseModel):
     """Schema for messages in the Redis queue."""
+
     message_id: str
     type: MessageType
     priority: MessagePriority
@@ -90,7 +93,9 @@ class MessageQueue:
         # Add to priority queue (LPUSH for FIFO with RPOP)
         await redis_client.lpush(queue_key, message_json)
 
-        console.print(f"[green]Queued {message.type.value} message for chat {message.chat_id} (priority: {message.priority.value})[/green]")
+        console.print(
+            f"[green]Queued {message.type.value} message for chat {message.chat_id} (priority: {message.priority.value})[/green]"
+        )
 
         # Return the message_id for cases where we need to track it
         return message.message_id
@@ -102,7 +107,7 @@ class MessageQueue:
         reply_to_message_id: Optional[int] = None,
         parse_mode: Optional[str] = "Markdown",
         priority: MessagePriority = MessagePriority.HIGH,
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Send a reply message."""
         message = QueuedMessage(
@@ -112,7 +117,7 @@ class MessageQueue:
             text=text,
             parse_mode=parse_mode,
             reply_to_message_id=reply_to_message_id,
-            context=context or {}
+            context=context or {},
         )
         await self.publish(message)
 
@@ -121,18 +126,41 @@ class MessageQueue:
         chat_id: int,
         text: str,
         edit_message_id: Optional[int] = None,
-        context: Optional[Dict[str, Any]] = None
-    ) -> None:
-        """Send a status update message."""
+        context: Optional[Dict[str, Any]] = None,
+    ) -> "MessageQueue.MessagePlaceholder":
+        """Send a status update message and return a placeholder with message info."""
         message = QueuedMessage(
             type=MessageType.STATUS_UPDATE,
             priority=MessagePriority.NORMAL,
             chat_id=chat_id,
             text=text,
             edit_message_id=edit_message_id,
-            context=context or {}
+            context=context or {},
         )
-        await self.publish(message)
+        return await self.publish_and_return_placeholder(message)
+
+    async def send_immediate_status_update(
+        self,
+        chat_id: int,
+        text: str,
+        parse_mode: Optional[str] = "Markdown",
+        context: Optional[Dict[str, Any]] = None,
+    ) -> Any:
+        """Send a status update immediately (not queued) and return the actual Telegram Message object."""
+        if not self._bot:
+            raise RuntimeError("Bot instance not set in MessageQueue")
+
+        try:
+            sent_message = await self._bot.send_message(
+                chat_id=chat_id, text=text, parse_mode=parse_mode
+            )
+            console.print(
+                f"[green]Sent immediate status update to chat {chat_id}[/green]"
+            )
+            return sent_message
+        except Exception as e:
+            console.print(f"[red]Failed to send immediate status update: {e}[/red]")
+            raise
 
     async def send_cross_chat(
         self,
@@ -141,13 +169,10 @@ class MessageQueue:
         reply_to_message_id: int,
         reply_to_chat_id: int,
         parse_mode: Optional[str] = "Markdown",
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Send a cross-chat message with reply parameters."""
-        reply_params = {
-            "message_id": reply_to_message_id,
-            "chat_id": reply_to_chat_id
-        }
+        reply_params = {"message_id": reply_to_message_id, "chat_id": reply_to_chat_id}
 
         message = QueuedMessage(
             type=MessageType.CROSS_CHAT,
@@ -156,7 +181,7 @@ class MessageQueue:
             text=text,
             parse_mode=parse_mode,
             reply_parameters=reply_params,
-            context=context or {}
+            context=context or {},
         )
         await self.publish(message)
 
@@ -166,7 +191,7 @@ class MessageQueue:
         text: str,
         priority: MessagePriority = MessagePriority.URGENT,
         parse_mode: Optional[str] = "Markdown",
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Send a notification message."""
         message = QueuedMessage(
@@ -175,15 +200,12 @@ class MessageQueue:
             chat_id=chat_id,
             text=text,
             parse_mode=parse_mode,
-            context=context or {}
+            context=context or {},
         )
         await self.publish(message)
 
     async def send_error(
-        self,
-        chat_id: int,
-        text: str,
-        context: Optional[Dict[str, Any]] = None
+        self, chat_id: int, text: str, context: Optional[Dict[str, Any]] = None
     ) -> None:
         """Send an error message with urgent priority."""
         message = QueuedMessage(
@@ -192,19 +214,19 @@ class MessageQueue:
             chat_id=chat_id,
             text=text,
             parse_mode="Markdown",
-            context=context or {}
+            context=context or {},
         )
         await self.publish(message)
 
     class MessagePlaceholder:
         """Placeholder object that mimics a Telegram Message for compatibility."""
+
         def __init__(self, message_id: str, chat_id: int):
             self.message_id = message_id
-            self.chat = type('Chat', (), {'id': chat_id})()
+            self.chat = type("Chat", (), {"id": chat_id})()
 
     async def publish_and_return_placeholder(
-        self,
-        message: QueuedMessage
+        self, message: QueuedMessage
     ) -> "MessageQueue.MessagePlaceholder":
         """Publish message and return a placeholder object for compatibility."""
         message_id = await self.publish(message)
@@ -244,7 +266,7 @@ class MessageQueue:
             MessagePriority.URGENT,
             MessagePriority.HIGH,
             MessagePriority.NORMAL,
-            MessagePriority.LOW
+            MessagePriority.LOW,
         ]
 
         last_message_time = datetime.utcnow()
@@ -298,7 +320,9 @@ class MessageQueue:
             return False
 
         try:
-            console.print(f"[blue]Processing {message.type.value} message for chat {message.chat_id}[/blue]")
+            console.print(
+                f"[blue]Processing {message.type.value} message for chat {message.chat_id}[/blue]"
+            )
 
             # Prepare common parameters
             kwargs = {
@@ -315,8 +339,11 @@ class MessageQueue:
             if message.keyboard:
                 # Handle InlineKeyboardMarkup if provided
                 from telegram import InlineKeyboardMarkup
+
                 # Reconstruct InlineKeyboardMarkup from dict
-                kwargs["reply_markup"] = InlineKeyboardMarkup.de_json(message.keyboard, bot=self._bot)
+                kwargs["reply_markup"] = InlineKeyboardMarkup.de_json(
+                    message.keyboard, bot=self._bot
+                )
 
             # Handle different message types
             if message.edit_message_id:
@@ -330,9 +357,10 @@ class MessageQueue:
                 if message.reply_parameters:
                     # Cross-chat reply
                     from telegram import ReplyParameters
+
                     kwargs["reply_parameters"] = ReplyParameters(
                         message_id=message.reply_parameters["message_id"],
-                        chat_id=message.reply_parameters["chat_id"]
+                        chat_id=message.reply_parameters["chat_id"],
                     )
                 elif message.reply_to_message_id:
                     kwargs["reply_to_message_id"] = message.reply_to_message_id
@@ -342,14 +370,22 @@ class MessageQueue:
                 # Handle auto-delete if specified
                 if message.delete_after:
                     asyncio.create_task(
-                        self._auto_delete_message(message.chat_id, sent_message.message_id, message.delete_after)
+                        self._auto_delete_message(
+                            message.chat_id,
+                            sent_message.message_id,
+                            message.delete_after,
+                        )
                     )
 
-            console.print(f"[green]Successfully processed {message.type.value} message[/green]")
+            console.print(
+                f"[green]Successfully processed {message.type.value} message[/green]"
+            )
             return True
 
         except RetryAfter as e:
-            console.print(f"[yellow]Rate limited by Telegram API. Retry after {e.retry_after} seconds[/yellow]")
+            console.print(
+                f"[yellow]Rate limited by Telegram API. Retry after {e.retry_after} seconds[/yellow]"
+            )
             # Re-queue the message with a delay
             message.scheduled_for = datetime.utcnow() + timedelta(seconds=e.retry_after)
             await self._requeue_message(message)
@@ -368,13 +404,17 @@ class MessageQueue:
         message.retry_count += 1
 
         if message.retry_count <= message.max_retries:
-            console.print(f"[yellow]Retrying message {message.message_id} (attempt {message.retry_count})[/yellow]")
+            console.print(
+                f"[yellow]Retrying message {message.message_id} (attempt {message.retry_count})[/yellow]"
+            )
             # Add exponential backoff delay
-            delay = min(2 ** message.retry_count, 300)  # Max 5 minutes
+            delay = min(2**message.retry_count, 300)  # Max 5 minutes
             message.scheduled_for = datetime.utcnow() + timedelta(seconds=delay)
             await self._requeue_message(message)
         else:
-            console.print(f"[red]Message {message.message_id} exceeded max retries, moving to dead letter queue[/red]")
+            console.print(
+                f"[red]Message {message.message_id} exceeded max retries, moving to dead letter queue[/red]"
+            )
             await self._move_to_dead_letter_queue(message)
 
     async def _requeue_message(self, message: QueuedMessage) -> None:
@@ -395,14 +435,20 @@ class MessageQueue:
         dlq_key = f"{settings.REDIS_KEY_PREFIX}dead_letter_queue"
         await redis_client.lpush(dlq_key, message.model_dump_json())
 
-    async def _auto_delete_message(self, chat_id: int, message_id: int, delay: int) -> None:
+    async def _auto_delete_message(
+        self, chat_id: int, message_id: int, delay: int
+    ) -> None:
         """Auto-delete a message after the specified delay."""
         await asyncio.sleep(delay)
         try:
             await self._bot.delete_message(chat_id=chat_id, message_id=message_id)
-            console.print(f"[green]Auto-deleted message {message_id} from chat {chat_id}[/green]")
+            console.print(
+                f"[green]Auto-deleted message {message_id} from chat {chat_id}[/green]"
+            )
         except Exception as e:
-            console.print(f"[yellow]Failed to auto-delete message {message_id}: {e}[/yellow]")
+            console.print(
+                f"[yellow]Failed to auto-delete message {message_id}: {e}[/yellow]"
+            )
 
     async def get_queue_stats(self) -> Dict[str, int]:
         """Get statistics about the message queues."""

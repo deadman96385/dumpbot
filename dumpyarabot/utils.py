@@ -1,4 +1,6 @@
 import secrets
+import random
+import time
 from datetime import datetime
 from typing import List, Tuple, Optional
 
@@ -46,6 +48,9 @@ def _is_matching_build(
     build: schemas.JenkinsBuild, args: schemas.DumpArguments
 ) -> bool:
     """Check if a build matches the given arguments."""
+    if not build.actions:
+        return False
+
     for action in build.actions:
         if "parameters" in action:
             params = {param["name"]: param["value"] for param in action["parameters"]}
@@ -160,7 +165,9 @@ async def call_jenkins(args: schemas.DumpArguments, add_blacklist: bool = False)
                     console.print(f"[blue]Queue item ID: {queue_item_id}[/blue]")
 
             if queue_item_id:
-                return f"{job_name.capitalize()} job triggered (Queue ID: {queue_item_id})"
+                return (
+                    f"{job_name.capitalize()} job triggered (Queue ID: {queue_item_id})"
+                )
             else:
                 return f"{job_name.capitalize()} job triggered"
         except Exception as e:
@@ -174,7 +181,9 @@ async def get_jenkins_console_log(job_name: str, build_number: str) -> str:
 
     async with httpx.AsyncClient() as client:
         try:
-            console_url = f"{settings.JENKINS_URL}/job/{job_name}/{build_number}/consoleText"
+            console_url = (
+                f"{settings.JENKINS_URL}/job/{job_name}/{build_number}/consoleText"
+            )
             response = await client.get(
                 console_url,
                 auth=(settings.JENKINS_USER_NAME, settings.JENKINS_USER_TOKEN),
@@ -183,7 +192,9 @@ async def get_jenkins_console_log(job_name: str, build_number: str) -> str:
             response.raise_for_status()
 
             console_log = response.text
-            console.print(f"[green]Successfully fetched {len(console_log)} characters of console log[/green]")
+            console.print(
+                f"[green]Successfully fetched {len(console_log)} characters of console log[/green]"
+            )
             return console_log
 
         except Exception as e:
@@ -191,9 +202,13 @@ async def get_jenkins_console_log(job_name: str, build_number: str) -> str:
             raise
 
 
-async def get_jenkins_build_timestamp(job_name: str, build_number: str) -> Optional[str]:
+async def get_jenkins_build_timestamp(
+    job_name: str, build_number: str
+) -> Optional[str]:
     """Get the build timestamp from Jenkins for a specific job and build number."""
-    console.print(f"[blue]Fetching build timestamp for {job_name} #{build_number}[/blue]")
+    console.print(
+        f"[blue]Fetching build timestamp for {job_name} #{build_number}[/blue]"
+    )
 
     async with httpx.AsyncClient() as client:
         try:
@@ -263,3 +278,145 @@ async def cancel_jenkins_job(job_id: str, use_privdump: bool = False) -> str:
                 f"[red]Error while cancelling {job_name} job {job_id}: {e}[/red]"
             )
             raise
+
+
+async def get_random_jenkins_build() -> Optional[Tuple[str, schemas.JenkinsBuild, str]]:
+    """
+    Get a random Jenkins build from either dumpyara or privdump jobs.
+
+    Returns:
+        Tuple of (job_name, build, console_log) or None if no suitable build found
+    """
+    console.print(
+        "[blue]Selecting random Jenkins build for surprise generation...[/blue]"
+    )
+
+    # Seed the random number generator with cryptographically secure randomness
+    # This ensures truly random selection and prevents duplicate patterns
+    random.seed(secrets.randbits(64) ^ int(time.time() * 1000000))
+
+    job_names = ["dumpyara"]
+    max_attempts = 10
+
+    for attempt in range(max_attempts):
+        try:
+            # Randomly select a job
+            job_name = random.choice(job_names)
+            console.print(f"[blue]Attempt {attempt + 1}: Trying {job_name} job[/blue]")
+
+            # Get recent builds (limit to last 50 for reasonable performance)
+            builds = await get_jenkins_builds(job_name)
+            if not builds:
+                console.print(f"[yellow]No builds found for {job_name}[/yellow]")
+                continue
+
+            # Filter to completed builds only (successful or failed)
+            completed_builds = [b for b in builds if b.result is not None]
+            if not completed_builds:
+                console.print(
+                    f"[yellow]No completed builds found for {job_name}[/yellow]"
+                )
+                continue
+
+            # Take a random sample of recent builds (up to 20) for better randomness
+            sample_size = min(20, len(completed_builds))
+            sample_builds = random.sample(completed_builds, sample_size)
+
+            # Try builds from the sample until we find one with meaningful content
+            for build in sample_builds:
+                try:
+                    console.print(f"[blue]Trying build #{build.number}...[/blue]")
+                    console_log = await get_jenkins_console_log(
+                        job_name, str(build.number)
+                    )
+
+                    # Filter out builds with insufficient content
+                    if len(console_log.strip()) < 500:  # Minimum meaningful log length
+                        console.print(
+                            f"[yellow]Build #{build.number} log too short, skipping[/yellow]"
+                        )
+                        continue
+
+                    # Avoid builds that are just starting/setup logs
+                    if not any(
+                        keyword in console_log.lower()
+                        for keyword in [
+                            "downloading",
+                            "extracting",
+                            "error",
+                            "failed",
+                            "success",
+                            "completed",
+                        ]
+                    ):
+                        console.print(
+                            f"[yellow]Build #{build.number} appears to be setup-only, skipping[/yellow]"
+                        )
+                        continue
+
+                    # Found a suitable build
+                    console.print(
+                        f"[green]Selected {job_name} build #{build.number} for surprise generation[/green]"
+                    )
+                    return job_name, build, console_log
+
+                except Exception as e:
+                    console.print(
+                        f"[yellow]Failed to fetch log for build #{build.number}: {e}[/yellow]"
+                    )
+                    continue
+
+        except Exception as e:
+            console.print(f"[yellow]Error fetching builds for {job_name}: {e}[/yellow]")
+            continue
+
+    console.print("[red]Could not find a suitable build after all attempts[/red]")
+    return None
+
+
+async def get_build_summary_info(job_name: str, build: schemas.JenkinsBuild) -> str:
+    """
+    Get summary information about a build for display purposes.
+
+    Args:
+        job_name: The Jenkins job name
+        build: The build object
+
+    Returns:
+        Formatted summary string
+    """
+    # Get build timestamp
+    timestamp = await get_jenkins_build_timestamp(job_name, str(build.number))
+    timestamp_str = timestamp if timestamp else "Unknown time"
+
+    # Get build URL parameters if available
+    build_url = "Unknown"
+    if build.actions:
+        for action in build.actions:
+            if "parameters" in action:
+                params = {param["name"]: param["value"] for param in action["parameters"]}
+                if "URL" in params:
+                    build_url = params["URL"]
+                    break
+
+    # Format result status
+    result_emoji = {
+        "SUCCESS": "✅",
+        "FAILURE": "❌",
+        "ABORTED": "⚠️",
+        "UNSTABLE": "⚠️",
+    }.get(build.result, "❓")
+
+    # Truncate URL and use simple escaping for problematic characters
+    display_url = build_url[:50] + ("..." if len(build_url) > 50 else "")
+    # Only escape underscores and asterisks which are most problematic in Markdown
+    display_url = display_url.replace("_", "\\_").replace("*", "\\*")
+
+    return (
+        f"**Build Info:**\n"
+        f"• Job: `{job_name}`\n"
+        f"• Build: `#{build.number}`\n"
+        f"• Result: {result_emoji} {build.result}\n"
+        f"• Time: {timestamp_str}\n"
+        f"• URL: {display_url}"
+    )
