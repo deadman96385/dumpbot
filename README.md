@@ -1,6 +1,6 @@
 # DumpyaraBot
 
-A Telegram bot for AndroidDumps that integrates with Jenkins to manage firmware dump processes. The bot supports both direct dump commands and a moderated request system for community contributions.
+A Telegram bot for AndroidDumps that uses ARQ (Async Redis Queue) for distributed job processing with rich metadata tracking. The bot supports direct dump commands, a moderated request system, and automated blacklist processing for community contributions.
 
 ## 🔗 Bot Link
 https://t.me/dumpyarabot
@@ -10,7 +10,7 @@ https://t.me/dumpyarabot
 - **Direct Dump Commands**: `/dump` command for authorized users and chats
 - **Moderated Request System**: Users can submit `#request` messages for admin review
 - **Private Dumps**: Support for private dumps that auto-delete trigger messages
-- **Jenkins Integration**: Automated firmware extraction and GitLab repository creation
+- **ARQ Integration**: Automated firmware extraction and GitLab repository creation
 - **Cross-Chat Support**: Status updates with proper message threading
 - **Admin Controls**: Bot restart and job cancellation with permission checks
 
@@ -21,7 +21,7 @@ https://t.me/dumpyarabot
 - Python 3.8+
 - [uv](https://github.com/astral-sh/uv) package manager
 - Telegram Bot Token from [@BotFather](https://t.me/BotFather)
-- Jenkins server with `dumpyara` and `privdump` jobs
+- ARQ worker processes for `dumpyara` and `privdump` job handling
 - Redis server (optional, for persistent storage)
 
 ### Installation
@@ -42,16 +42,15 @@ https://t.me/dumpyarabot
 
    Create a `.env` file or set the following environment variables:
 
-   **Required:**
-   ```bash
-   TELEGRAM_BOT_TOKEN=your_bot_token_here
-   JENKINS_URL=https://your-jenkins-server.com
-   JENKINS_USER_NAME=your_jenkins_username
-   JENKINS_USER_TOKEN=your_jenkins_api_token
-   ALLOWED_CHATS=[-1001234567890, -1001234567891]
-   REQUEST_CHAT_ID=-1001234567892
-   REVIEW_CHAT_ID=-1001234567893
-   ```
+    **Required:**
+    ```bash
+    TELEGRAM_BOT_TOKEN=your_bot_token_here
+    ALLOWED_CHATS=[-1001234567890, -1001234567891]
+    REQUEST_CHAT_ID=-1001234567892
+    REVIEW_CHAT_ID=-1001234567893
+    DUMPER_TOKEN=your_gitlab_api_token
+    API_KEY=your_telegram_bot_token_for_updates
+    ```
 
    **Optional:**
    ```bash
@@ -118,7 +117,7 @@ Reject a pending dump request with optional reason.
 ```
 
 #### `/cancel [job_id] [options]`
-Cancel an ongoing Jenkins job (admin only).
+Cancel an ongoing ARQ job (admin only).
 
 **Options:**
 - `p`: Cancel privdump job instead of regular dumpyara job
@@ -188,9 +187,9 @@ uv run mypy dumpyarabot/
 
 The bot runs as a long-running process and won't pick up code changes until restarted.
 
-## 📊 Jenkins Integration
+## 📊 ARQ Integration
 
-The bot integrates with Jenkins jobs that use the `extract_and_push.sh` script for firmware processing:
+The bot uses ARQ (Async Redis Queue) for distributed job processing with integrated firmware extraction:
 
 ### Supported Features
 - **URL Mirror Optimization**: Automatic CDN selection for better download speeds
@@ -199,12 +198,12 @@ The bot integrates with Jenkins jobs that use the `extract_and_push.sh` script f
 - **Cross-Chat Status Updates**: Progress messages with proper threading
 - **Error Handling**: Comprehensive error reporting and recovery
 
-### Environment Variables Passed to Jenkins
-- `URL`: Firmware download URL
-- `USE_ALT_DUMPER`: Boolean flag for alternative extraction
-- `ADD_BLACKLIST`: Boolean flag for URL blacklisting
-- `INITIAL_MESSAGE_ID`: Telegram message ID for replies
-- `INITIAL_CHAT_ID`: Chat ID for cross-chat threading
+### ARQ Job Processing
+Jobs are processed asynchronously using ARQ workers with the following components:
+- `FirmwareDownloader`: URL optimization and download handling
+- `FirmwareExtractor`: Partition extraction and boot image processing
+- `PropertyExtractor`: Device metadata and property extraction
+- `GitLabManager`: Repository management and notifications
 
 ## 🔄 Storage Options
 
@@ -229,7 +228,7 @@ export REDIS_URL=redis://localhost:6379/0
 The bot includes comprehensive error handling:
 
 - **Network failures**: Automatic retries and fallback mechanisms
-- **Jenkins errors**: Detailed error reporting with build logs
+- **ARQ errors**: Detailed error reporting with job logs
 - **Permission errors**: Clear error messages for unauthorized access
 - **Validation errors**: User-friendly error messages for invalid inputs
 
