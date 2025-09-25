@@ -199,7 +199,7 @@ class MessageQueue:
     class MessagePlaceholder:
         """Placeholder object that mimics a Telegram Message for compatibility."""
         def __init__(self, message_id: str, chat_id: int):
-            self.message_id = int(message_id.replace('-', '')[:9])  # Convert UUID to int-like
+            self.message_id = message_id
             self.chat = type('Chat', (), {'id': chat_id})()
 
     async def publish_and_return_placeholder(
@@ -315,7 +315,8 @@ class MessageQueue:
             if message.keyboard:
                 # Handle InlineKeyboardMarkup if provided
                 from telegram import InlineKeyboardMarkup
-                kwargs["reply_markup"] = InlineKeyboardMarkup.from_dict(message.keyboard)
+                # Reconstruct InlineKeyboardMarkup from dict
+                kwargs["reply_markup"] = InlineKeyboardMarkup.de_json(message.keyboard, bot=self._bot)
 
             # Handle different message types
             if message.edit_message_id:
