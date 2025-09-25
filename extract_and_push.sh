@@ -18,19 +18,19 @@ sendTG() {
     local mode="${1:?Error: Missing mode}" && shift
     local api_url="https://api.telegram.org/bot${API_KEY:?}"
     if [[ ${mode} =~ normal ]]; then
-        curl --compressed -s "${api_url}/sendmessage" --data "text=$(urlEncode "${*:?Error: Missing message text.}")&chat_id=${CHAT_ID:?}&parse_mode=HTML&disable_web_page_preview=True"
+        curl --compressed -s "${api_url}/sendmessage" --data "text=$(urlEncode "${*:?Error: Missing message text.}")&chat_id=${CHAT_ID:?}&parse_mode=Markdown&disable_web_page_preview=True"
     elif [[ ${mode} =~ reply ]]; then
         local message_id="${1:?Error: Missing message id for reply.}" && shift
         if [[ -n "${REPLY_CHAT_ID}" ]]; then
             # Use reply_parameters for cross-chat reply
-            curl --compressed -s "${api_url}/sendmessage" --data "text=$(urlEncode "${*:?Error: Missing message text.}")&chat_id=${CHAT_ID:?}&parse_mode=HTML&reply_parameters=$(urlEncode "{\"message_id\":${message_id},\"chat_id\":${REPLY_CHAT_ID}}")&disable_web_page_preview=True"
+            curl --compressed -s "${api_url}/sendmessage" --data "text=$(urlEncode "${*:?Error: Missing message text.}")&chat_id=${CHAT_ID:?}&parse_mode=Markdown&reply_parameters=$(urlEncode "{\"message_id\":${message_id},\"chat_id\":${REPLY_CHAT_ID}}")&disable_web_page_preview=True"
         else
             # Use regular reply_to_message_id for same-chat reply
-            curl --compressed -s "${api_url}/sendmessage" --data "text=$(urlEncode "${*:?Error: Missing message text.}")&chat_id=${CHAT_ID:?}&parse_mode=HTML&reply_to_message_id=${message_id}&disable_web_page_preview=True"
+            curl --compressed -s "${api_url}/sendmessage" --data "text=$(urlEncode "${*:?Error: Missing message text.}")&chat_id=${CHAT_ID:?}&parse_mode=Markdown&reply_to_message_id=${message_id}&disable_web_page_preview=True"
         fi
     elif [[ ${mode} =~ edit ]]; then
         local message_id="${1:?Error: Missing message id for edit.}" && shift
-        curl --compressed -s "${api_url}/editMessageText" --data "text=$(urlEncode "${*:?Error: Missing message text.}")&chat_id=${CHAT_ID:?}&parse_mode=HTML&message_id=${message_id}&disable_web_page_preview=True"
+        curl --compressed -s "${api_url}/editMessageText" --data "text=$(urlEncode "${*:?Error: Missing message text.}")&chat_id=${CHAT_ID:?}&parse_mode=Markdown&message_id=${message_id}&disable_web_page_preview=True"
     fi
 }
 
@@ -50,10 +50,10 @@ sendTG_with_cancel() {
         local message_id="${1:?Error: Missing message id for reply.}" && shift
         if [[ -n "${REPLY_CHAT_ID}" ]]; then
             # Use reply_parameters for cross-chat reply with cancel button
-            curl --compressed -s "${api_url}/sendmessage" --data "text=$(urlEncode "${*:?Error: Missing message text.}")&chat_id=${CHAT_ID:?}&parse_mode=HTML&reply_parameters=$(urlEncode "{\"message_id\":${message_id},\"chat_id\":${REPLY_CHAT_ID}}")&reply_markup=$(urlEncode "${cancel_keyboard}")&disable_web_page_preview=True"
+            curl --compressed -s "${api_url}/sendmessage" --data "text=$(urlEncode "${*:?Error: Missing message text.}")&chat_id=${CHAT_ID:?}&parse_mode=Markdown&reply_parameters=$(urlEncode "{\"message_id\":${message_id},\"chat_id\":${REPLY_CHAT_ID}}")&reply_markup=$(urlEncode "${cancel_keyboard}")&disable_web_page_preview=True"
         else
             # Use regular reply_to_message_id for same-chat reply with cancel button
-            curl --compressed -s "${api_url}/sendmessage" --data "text=$(urlEncode "${*:?Error: Missing message text.}")&chat_id=${CHAT_ID:?}&parse_mode=HTML&reply_to_message_id=${message_id}&reply_markup=$(urlEncode "${cancel_keyboard}")&disable_web_page_preview=True"
+            curl --compressed -s "${api_url}/sendmessage" --data "text=$(urlEncode "${*:?Error: Missing message text.}")&chat_id=${CHAT_ID:?}&parse_mode=Markdown&reply_to_message_id=${message_id}&reply_markup=$(urlEncode "${cancel_keyboard}")&disable_web_page_preview=True"
         fi
     fi
 }
@@ -74,6 +74,8 @@ sendTG_edit_wrapper() {
             ;;
     esac
 }
+
+
 
 # Analyze Jenkins console log with Gemini AI
 analyze_jenkins_log() {
@@ -160,6 +162,7 @@ terminate() {
         1)
             local string="<b>failed!</b> (<a href=\"${BUILD_URL}\">#${BUILD_ID}</a>)
 View <a href=\"${BUILD_URL}consoleText\">console logs</a> for more."
+
             # Try to analyze the failure with Gemini AI
             echo "[INFO] Attempting to analyze build failure with AI..."
             local analysis
@@ -997,18 +1000,18 @@ sendTG_edit_wrapper permanent "${MESSAGE_ID}" "${MESSAGE}"$'\n'"<code>Pushed</co
 
 ## Only add this line in case URL is expected in the whitelist
 if [ "${WHITELISTED}" == true ] && [ "${ADD_BLACKLIST}" == false ]; then
-    link="[<a href=\"${URL}\">firmware</a>]"
+    link="[[firmware](${URL})]"
 fi
 
 echo -e "[INFO] Sending Telegram notification"
-tg_html_text="<b>Brand</b>: <code>$brand</code>
-<b>Device</b>: <code>$codename</code>
-<b>Version</b>: <code>$release</code>
-<b>Fingerprint</b>: <code>$fingerprint</code>
-<b>Platform</b>: <code>$platform</code>
-[<a href=\"https://$GITLAB_SERVER/$ORG/$repo/tree/$branch/\">repo</a>] $link"
+tg_text="**Brand**: \`$brand\`
+**Device**: \`$codename\`
+**Version**: \`$release\`
+**Fingerprint**: \`$fingerprint\`
+**Platform**: \`$platform\`
+[[repo](https://$GITLAB_SERVER/$ORG/$repo/tree/$branch/)] $link"
 
 # Send message to Telegram channel
-curl --compressed -s "https://api.telegram.org/bot${API_KEY}/sendmessage" --data "text=${tg_html_text}&chat_id=@android_dumps&parse_mode=HTML&disable_web_page_preview=True" > /dev/null
+curl --compressed -s "https://api.telegram.org/bot${API_KEY}/sendmessage" --data "text=${tg_text}&chat_id=@android_dumps&parse_mode=Markdown&disable_web_page_preview=True" > /dev/null
 
 terminate 0
