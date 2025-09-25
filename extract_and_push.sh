@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 
-[[ -z ${API_KEY} ]] && echo "API_KEY not defined, exiting!" && exit 1
+# Redis messaging configuration (replaces API_KEY requirement)
+[[ -z ${REDIS_URL} ]] && REDIS_URL="redis://localhost:6379/0"
+[[ -z ${REDIS_KEY_PREFIX} ]] && REDIS_KEY_PREFIX="dumpyarabot:"
+[[ -z ${PYTHON_CMD} ]] && PYTHON_CMD="python3"
+
 [[ -z ${GITLAB_SERVER} ]] && GITLAB_SERVER="dumps.tadiphone.dev"
 [[ -z ${PUSH_HOST} ]] && PUSH_HOST="dumps"
 [[ -z $ORG ]] && ORG="dumps"
@@ -10,51 +14,128 @@ CHAT_ID="-1001412293127"
 [[ -z ${INITIAL_MESSAGE_ID} ]] && START_MESSAGE_ID="" || START_MESSAGE_ID="${INITIAL_MESSAGE_ID}"
 [[ -z ${INITIAL_CHAT_ID} ]] && REPLY_CHAT_ID="" || REPLY_CHAT_ID="${INITIAL_CHAT_ID}"
 
-# usage: normal - sendTg normal "message to send"
-#        reply  - sendTg reply message_id "reply to send"
-#        edit   - sendTg edit message_id "new message" ( new message must be different )
-# Uses global var API_KEY
+# Redis message publisher function
+publish_to_redis() {
+    local message_type="$1"
+    local priority="$2"
+    local chat_id="$3"
+    local text="$4"
+    local reply_to_message_id="$5"
+    local reply_to_chat_id="$6"
+    local keyboard="$7"
+
+    # Use Python to publish to Redis
+    $PYTHON_CMD << EOF
+import json
+import sys
+import uuid
+import redis
+from datetime import datetime
+
+try:
+    # Connect to Redis
+    redis_client = redis.from_url("$REDIS_URL", decode_responses=True)
+
+    # Create message data
+    message_data = {
+        "message_id": str(uuid.uuid4()),
+        "type": "$message_type",
+        "priority": "$priority",
+        "chat_id": int("$chat_id"),
+        "text": """$text""",
+        "parse_mode": "Markdown",
+        "reply_to_message_id": int("$reply_to_message_id") if "$reply_to_message_id" else None,
+        "reply_parameters": None,
+        "edit_message_id": None,
+        "delete_after": None,
+        "keyboard": $keyboard if "$keyboard" != "null" else None,
+        "disable_web_page_preview": True,
+        "retry_count": 0,
+        "max_retries": 3,
+        "created_at": datetime.utcnow().isoformat() + "Z",
+        "scheduled_for": None,
+        "context": {
+            "jenkins_script": True,
+            "build_id": "$BUILD_ID",
+            "job_name": "$JOB_NAME",
+            "build_url": "$BUILD_URL"
+        }
+    }
+
+    # Handle cross-chat replies
+    if "$reply_to_chat_id" and "$reply_to_chat_id" != "$chat_id":
+        message_data["reply_parameters"] = {
+            "message_id": int("$reply_to_message_id"),
+            "chat_id": int("$reply_to_chat_id")
+        }
+        message_data["reply_to_message_id"] = None
+        message_data["type"] = "cross_chat"
+        message_data["priority"] = "high"
+
+    # Determine queue and publish
+    queue_key = "${REDIS_KEY_PREFIX}msg_queue:" + message_data["priority"]
+    redis_client.lpush(queue_key, json.dumps(message_data))
+    print(f"[$(date '+%Y-%m-%d %H:%M:%S')] Published {message_data['type']} message to {message_data['priority']} queue")
+
+except Exception as e:
+    print(f"Error publishing to Redis: {e}", file=sys.stderr)
+    sys.exit(1)
+EOF
+}
+
+# usage: normal - sendTG normal "message to send"
+#        reply  - sendTG reply message_id "reply to send"
+#        edit   - sendTG edit message_id "new message" ( new message must be different )
+# Now publishes to Redis instead of direct Telegram API
 sendTG() {
     local mode="${1:?Error: Missing mode}" && shift
-    local api_url="https://api.telegram.org/bot${API_KEY:?}"
-    if [[ ${mode} =~ normal ]]; then
-        curl --compressed -s "${api_url}/sendmessage" --data "text=$(urlEncode "${*:?Error: Missing message text.}")&chat_id=${CHAT_ID:?}&parse_mode=Markdown&disable_web_page_preview=True"
-    elif [[ ${mode} =~ reply ]]; then
-        local message_id="${1:?Error: Missing message id for reply.}" && shift
-        if [[ -n "${REPLY_CHAT_ID}" ]]; then
-            # Use reply_parameters for cross-chat reply
-            curl --compressed -s "${api_url}/sendmessage" --data "text=$(urlEncode "${*:?Error: Missing message text.}")&chat_id=${CHAT_ID:?}&parse_mode=Markdown&reply_parameters=$(urlEncode "{\"message_id\":${message_id},\"chat_id\":${REPLY_CHAT_ID}}")&disable_web_page_preview=True"
-        else
-            # Use regular reply_to_message_id for same-chat reply
-            curl --compressed -s "${api_url}/sendmessage" --data "text=$(urlEncode "${*:?Error: Missing message text.}")&chat_id=${CHAT_ID:?}&parse_mode=Markdown&reply_to_message_id=${message_id}&disable_web_page_preview=True"
-        fi
-    elif [[ ${mode} =~ edit ]]; then
-        local message_id="${1:?Error: Missing message id for edit.}" && shift
-        curl --compressed -s "${api_url}/editMessageText" --data "text=$(urlEncode "${*:?Error: Missing message text.}")&chat_id=${CHAT_ID:?}&parse_mode=Markdown&message_id=${message_id}&disable_web_page_preview=True"
-    fi
+
+    case "${mode}" in
+        normal)
+            local text="$*"
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] sendTG normal: ${text:0:100}..."
+            publish_to_redis "status_update" "normal" "$CHAT_ID" "$text" "" "" "null"
+            ;;
+        reply)
+            local message_id="${1:?Error: Missing message id for reply.}" && shift
+            local text="$*"
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] sendTG reply: ${text:0:100}..."
+            publish_to_redis "status_update" "high" "$CHAT_ID" "$text" "$message_id" "$REPLY_CHAT_ID" "null"
+            ;;
+        edit)
+            local message_id="${1:?Error: Missing message id for edit.}" && shift
+            local text="$*"
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] sendTG edit: ${text:0:100}..."
+            # For edit mode, send as new message since we don't track message IDs from queue
+            publish_to_redis "status_update" "normal" "$CHAT_ID" "$text" "" "" "null"
+            ;;
+        *)
+            echo "Error: Invalid sendTG mode '$mode'. Use 'normal', 'reply', or 'edit'." >&2
+            return 1
+            ;;
+    esac
 }
 
 # Enhanced sendTG function that includes cancel button for Jenkins jobs
 # usage: cancel_reply - sendTG_with_cancel cancel_reply message_id "reply to send"
-# Uses global vars API_KEY, BUILD_ID, JOB_NAME
+# Uses global vars BUILD_ID, JOB_NAME (no longer needs API_KEY)
 sendTG_with_cancel() {
     local mode="${1:?Error: Missing mode}" && shift
-    local api_url="https://api.telegram.org/bot${API_KEY:?}"
-
-    # Create cancel button inline keyboard
-    local job_name="${JOB_NAME,,}"  # Convert to lowercase
-    [[ "${job_name}" == *"privdump"* ]] && job_name="privdump" || job_name="dumpyara"
-    local cancel_keyboard="{\"inline_keyboard\":[[{\"text\":\"🛑 Cancel ${job_name^} Job\",\"callback_data\":\"jenkins_cancel_${job_name}:${BUILD_ID}\"}]]}"
 
     if [[ ${mode} =~ cancel_reply ]]; then
         local message_id="${1:?Error: Missing message id for reply.}" && shift
-        if [[ -n "${REPLY_CHAT_ID}" ]]; then
-            # Use reply_parameters for cross-chat reply with cancel button
-            curl --compressed -s "${api_url}/sendmessage" --data "text=$(urlEncode "${*:?Error: Missing message text.}")&chat_id=${CHAT_ID:?}&parse_mode=Markdown&reply_parameters=$(urlEncode "{\"message_id\":${message_id},\"chat_id\":${REPLY_CHAT_ID}}")&reply_markup=$(urlEncode "${cancel_keyboard}")&disable_web_page_preview=True"
-        else
-            # Use regular reply_to_message_id for same-chat reply with cancel button
-            curl --compressed -s "${api_url}/sendmessage" --data "text=$(urlEncode "${*:?Error: Missing message text.}")&chat_id=${CHAT_ID:?}&parse_mode=Markdown&reply_to_message_id=${message_id}&reply_markup=$(urlEncode "${cancel_keyboard}")&disable_web_page_preview=True"
-        fi
+        local text="$*"
+
+        # Create cancel button inline keyboard
+        local job_name="${JOB_NAME,,}"  # Convert to lowercase
+        [[ "${job_name}" == *"privdump"* ]] && job_name="privdump" || job_name="dumpyara"
+        local cancel_keyboard="{\"inline_keyboard\":[[{\"text\":\"🛑 Cancel ${job_name^} Job\",\"callback_data\":\"jenkins_cancel_${job_name}:${BUILD_ID}\"}]]}"
+
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] sendTG_with_cancel: ${text:0:100}..."
+        publish_to_redis "status_update" "high" "$CHAT_ID" "$text" "$message_id" "$REPLY_CHAT_ID" "$cancel_keyboard"
+    else
+        echo "Error: Invalid sendTG_with_cancel mode '$mode'. Use 'cancel_reply'." >&2
+        return 1
     fi
 }
 
@@ -66,14 +147,48 @@ sendTG_with_cancel() {
 sendTG_edit_wrapper() {
     local mode="${1:?Error: Missing mode}" && shift
     local message_id="${1:?Error: Missing message id variable}" && shift
+    local text="$*"
+
     case "${mode}" in
-        temporary) sendTG edit "${message_id}" "${*:?}" > /dev/null ;;
+        temporary)
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] sendTG_edit_wrapper temporary: ${text:0:100}..."
+            publish_to_redis "status_update" "normal" "$CHAT_ID" "$text" "" "" "null"
+            ;;
         permanent)
-            MESSAGE="${*:?}"
-            sendTG edit "${message_id}" "${MESSAGE}" > /dev/null
+            MESSAGE="$text"
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] sendTG_edit_wrapper permanent: ${text:0:100}..."
+            publish_to_redis "status_update" "normal" "$CHAT_ID" "$MESSAGE" "" "" "null"
+            ;;
+        *)
+            echo "Error: Invalid sendTG_edit_wrapper mode '$mode'. Use 'temporary' or 'permanent'." >&2
+            return 1
             ;;
     esac
 }
+
+# Additional convenience functions for better message categorization
+sendTG_error() {
+    local text="$*"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] sendTG_error: ${text:0:100}..."
+    publish_to_redis "error" "urgent" "$CHAT_ID" "$text" "$START_MESSAGE_ID" "$REPLY_CHAT_ID" "null"
+}
+
+sendTG_success() {
+    local text="$*"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] sendTG_success: ${text:0:100}..."
+    publish_to_redis "notification" "high" "$CHAT_ID" "$text" "$START_MESSAGE_ID" "$REPLY_CHAT_ID" "null"
+}
+
+# Log Redis messaging system status
+echo "=== Redis Telegram Messaging System Active ==="
+echo "Redis URL: $REDIS_URL"
+echo "Redis Key Prefix: $REDIS_KEY_PREFIX"
+echo "Chat ID: $CHAT_ID"
+echo "Initial Message ID: $START_MESSAGE_ID"
+echo "Reply Chat ID: $REPLY_CHAT_ID"
+echo "Build ID: $BUILD_ID"
+echo "Job Name: $JOB_NAME"
+echo "=============================================="
 
 
 
@@ -188,22 +303,7 @@ Branch already exists on <a href=\"https://$GITLAB_SERVER/$ORG/$repo/tree/$branc
     exit "${1:?}"
 }
 
-# https://github.com/dylanaraps/pure-bash-bible#percent-encode-a-string
-urlEncode() {
-    declare LC_ALL=C
-    for ((i = 0; i < ${#1}; i++)); do
-        : "${1:i:1}"
-        case "${_}" in
-            [a-zA-Z0-9.~_-])
-                printf '%s' "${_}"
-                ;;
-            *)
-                printf '%%%02X' "'${_}"
-                ;;
-        esac
-    done 2>| /dev/null
-    printf '\n'
-}
+# NOTE: urlEncode function removed - no longer needed with Redis messaging
 
 curl --compressed --fail-with-body --silent --location "https://$GITLAB_SERVER" > /dev/null || {
     if _json="$(sendTG normal "Can't access $GITLAB_SERVER, cancelling job!")"; then

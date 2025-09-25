@@ -5,6 +5,7 @@ from telegram.ext import (ApplicationBuilder, CallbackQueryHandler,
                           CommandHandler, MessageHandler, filters, JobQueue)
 
 from dumpyarabot.handlers import analyze, blacklist, cancel_dump, dump, help_command, restart
+from dumpyarabot.message_queue import message_queue
 from dumpyarabot.mockup_handlers import (handle_enhanced_callback_query,
                                          mockup_command)
 from dumpyarabot.moderated_handlers import (accept_command,
@@ -26,27 +27,43 @@ async def handle_post_restart_update(context):
         console.print(f"[blue]Found restart message info: {restart_info}[/blue]")
 
         try:
-            # Update the original restart message to confirm success
-            await context.bot.edit_message_text(
+            # Use message queue for restart confirmation
+            await message_queue.send_notification(
                 chat_id=restart_info["chat_id"],
-                message_id=restart_info["message_id"],
                 text=f"✅ **Restart Complete**\n\n"
                      f"👤 **Requested by:** {restart_info['user_mention']}\n"
                      f"🚀 **Status:** Bot successfully restarted and is now online!\n\n"
                      f"⏱️ All operations are ready to resume.",
-                parse_mode="Markdown"
+                context={"restart_completion": True, "message_id_to_edit": restart_info["message_id"]}
             )
 
-            console.print("[green]Successfully updated restart confirmation message[/green]")
+            console.print("[green]Queued restart confirmation message[/green]")
 
         except Exception as e:
-            console.print(f"[yellow]Could not update restart message: {e}[/yellow]")
+            console.print(f"[yellow]Could not queue restart message: {e}[/yellow]")
 
         finally:
             # Clean up restart context
             RedisStorage.clear_restart_message_info()
     else:
         console.print("[yellow]No restart message info found in Redis[/yellow]")
+
+
+async def initialize_message_queue(context):
+    """Initialize the message queue system."""
+    from rich.console import Console
+    console = Console()
+
+    try:
+        # Set the bot instance for the message queue
+        message_queue.set_bot(context.bot)
+
+        # Start the message consumer
+        await message_queue.start_consumer()
+
+        console.print("[green]Message queue system initialized successfully[/green]")
+    except Exception as e:
+        console.print(f"[red]Failed to initialize message queue: {e}[/red]")
 
 
 async def register_bot_commands(application):
@@ -102,11 +119,14 @@ if __name__ == "__main__":
 
     # Register bot commands on startup (if job queue is available)
     if application.job_queue:
+        # Initialize message queue system first
+        application.job_queue.run_once(initialize_message_queue, 0)
+
         application.job_queue.run_once(
-            lambda context: register_bot_commands(application), 0
+            lambda context: register_bot_commands(application), 1
         )
         # Handle post-restart message update
-        application.job_queue.run_once(handle_post_restart_update, 1)
+        application.job_queue.run_once(handle_post_restart_update, 2)
 
     application.run_polling()
 

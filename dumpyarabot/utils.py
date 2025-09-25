@@ -122,10 +122,10 @@ async def call_jenkins(args: schemas.DumpArguments, add_blacklist: bool = False)
     jenkins_url = f"{settings.JENKINS_URL}/job/{job_name}/buildWithParameters"
 
     # Debug: Show replicable Jenkins command
-    console.print(f"[yellow]=== JENKINS DEBUG COMMAND ===[/yellow]")
+    console.print("[yellow]=== JENKINS DEBUG COMMAND ===[/yellow]")
     console.print(f"[cyan]Job: {job_name}[/cyan]")
     console.print(f"[cyan]URL: {jenkins_url}[/cyan]")
-    console.print(f"[cyan]Parameters:[/cyan]")
+    console.print("[cyan]Parameters:[/cyan]")
     for key, value in jenkins_params.items():
         console.print(f"  {key} = {value} ({type(value).__name__})")
 
@@ -134,9 +134,9 @@ async def call_jenkins(args: schemas.DumpArguments, add_blacklist: bool = False)
     curl_command = f'curl -X POST "{jenkins_url}?{param_string}" \\\n'
     curl_command += f'  -u "{settings.JENKINS_USER_NAME}:***"'
 
-    console.print(f"[green]Equivalent curl command:[/green]")
+    console.print("[green]Equivalent curl command:[/green]")
     console.print(f"[dim]{curl_command}[/dim]")
-    console.print(f"[yellow]=== END JENKINS DEBUG ===[/yellow]")
+    console.print("[yellow]=== END JENKINS DEBUG ===[/yellow]")
 
     async with httpx.AsyncClient() as client:
         try:

@@ -8,6 +8,7 @@ from telegram.ext import ContextTypes
 from dumpyarabot import schemas, utils
 from dumpyarabot.config import settings
 from dumpyarabot.gemini_analyzer import analyzer
+from dumpyarabot.message_queue import message_queue
 
 console = Console()
 
@@ -33,11 +34,11 @@ async def dump(
     if not context.args:
         console.print("[yellow]No arguments provided for dump command[/yellow]")
         usage = "Usage: `/dump [URL] [a|f|p]`\nURL: required, a: alt dumper, f: force, p: use privdump"
-        await context.bot.send_message(
+        await message_queue.send_reply(
             chat_id=chat.id,
-            reply_to_message_id=message.message_id,
             text=usage,
-            parse_mode="Markdown",
+            reply_to_message_id=message.message_id,
+            context={"command": "dump", "error": "missing_args"}
         )
         return
 
@@ -79,10 +80,11 @@ async def dump(
 
         if not force:
             console.print("[blue]Checking for existing builds...[/blue]")
-            initial_message = await context.bot.send_message(
+            # Send initial status message through queue
+            await message_queue.send_status_update(
                 chat_id=chat.id,
-                reply_to_message_id=None if use_privdump else message.message_id,
                 text="Checking for existing builds...",
+                context={"command": "dump", "url": str(dump_args.url), "checking_builds": True}
             )
 
             exists, status_message = await utils.check_existing_build(dump_args)
@@ -90,17 +92,13 @@ async def dump(
                 console.print(
                     f"[yellow]Found existing build: {status_message}[/yellow]"
                 )
-                await context.bot.edit_message_text(
+                await message_queue.send_reply(
                     chat_id=chat.id,
-                    message_id=initial_message.message_id,
                     text=status_message,
+                    reply_to_message_id=None if use_privdump else message.message_id,
+                    context={"command": "dump", "url": str(dump_args.url), "existing_build": True}
                 )
                 return
-
-            await context.bot.delete_message(
-                chat_id=chat.id,
-                message_id=initial_message.message_id,
-            )
 
         if not use_privdump:
             dump_args.initial_message_id = message.message_id
@@ -119,10 +117,11 @@ async def dump(
         response_text = "An error occurred"
 
     # Reply to the user with whatever the status is
-    await context.bot.send_message(
+    await message_queue.send_reply(
         chat_id=chat.id,
-        reply_to_message_id=None if use_privdump else message.message_id,
         text=response_text,
+        reply_to_message_id=None if use_privdump else message.message_id,
+        context={"command": "dump", "url": url, "final_response": True}
     )
 
 
@@ -147,10 +146,10 @@ async def cancel_dump(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         console.print(
             f"[yellow]Non-admin user {user.id} tried to use cancel command[/yellow]"
         )
-        await context.bot.send_message(
+        await message_queue.send_error(
             chat_id=chat.id,
-            reply_to_message_id=message.message_id,
             text="You don't have permission to use this command",
+            context={"command": "cancel", "user_id": user.id, "error": "permission_denied"}
         )
         return
 
@@ -160,11 +159,11 @@ async def cancel_dump(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         usage = (
             "Usage: `/cancel [job_id] [p]`\njob_id: required, p: cancel privdump job"
         )
-        await context.bot.send_message(
+        await message_queue.send_reply(
             chat_id=chat.id,
-            reply_to_message_id=message.message_id,
             text=usage,
-            parse_mode="Markdown",
+            reply_to_message_id=message.message_id,
+            context={"command": "cancel", "error": "missing_args"}
         )
         return
 
@@ -186,10 +185,11 @@ async def cancel_dump(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         console.print_exception()
         response_message = f"Error cancelling job: {str(e)}"
 
-    await context.bot.send_message(
+    await message_queue.send_reply(
         chat_id=chat.id,
-        reply_to_message_id=message.message_id,
         text=response_message,
+        reply_to_message_id=message.message_id,
+        context={"command": "cancel", "job_id": job_id, "success": "Successfully processed cancel request" in response_message}
     )
 
 
@@ -214,11 +214,11 @@ async def blacklist(
     if not context.args:
         console.print("[yellow]No arguments provided for blacklist command[/yellow]")
         usage = "Usage: `/blacklist [URL]`\nURL: required"
-        await context.bot.send_message(
+        await message_queue.send_reply(
             chat_id=chat.id,
-            reply_to_message_id=message.message_id,
             text=usage,
-            parse_mode="Markdown",
+            reply_to_message_id=message.message_id,
+            context={"command": "blacklist", "error": "missing_args"}
         )
         return
 
@@ -251,10 +251,11 @@ async def blacklist(
         response_text = "An error occurred"
 
     # Reply to the user with whatever the status is
-    await context.bot.send_message(
+    await message_queue.send_reply(
         chat_id=chat.id,
-        reply_to_message_id=message.message_id,
         text=response_text,
+        reply_to_message_id=message.message_id,
+        context={"command": "blacklist", "url": url, "final_response": True}
     )
 
 
@@ -313,11 +314,11 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     help_text += "• `f` - Force re-dump (skip existing dump/branch check)\n"
     help_text += "• `p` - Use private dump (Deletes message, hidden Jenkins job, Firmware URL = Not visibile, Finished dump in Gitlab = Visible.)\n"
 
-    await context.bot.send_message(
+    await message_queue.send_reply(
         chat_id=chat.id,
-        reply_to_message_id=message.message_id,
         text=help_text,
-        parse_mode="Markdown",
+        reply_to_message_id=message.message_id,
+        context={"command": "help", "is_admin": is_admin}
     )
 
 
@@ -339,18 +340,18 @@ async def restart(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         chat_member = await context.bot.get_chat_member(chat_id=chat.id, user_id=user.id)
         if chat_member.status not in ["administrator", "creator"]:
-            await context.bot.send_message(
+            await message_queue.send_error(
                 chat_id=chat.id,
-                reply_to_message_id=message.message_id,
                 text="❌ You don't have permission to restart the bot. Only chat administrators can use this command.",
+                context={"command": "restart", "user_id": user.id, "error": "permission_denied"}
             )
             return
     except Exception as e:
         console.print(f"[red]Error checking admin status: {e}[/red]")
-        await context.bot.send_message(
+        await message_queue.send_error(
             chat_id=chat.id,
-            reply_to_message_id=message.message_id,
             text="❌ Error checking admin permissions.",
+            context={"command": "restart", "user_id": user.id, "error": "admin_check_failed"}
         )
         return
 
@@ -384,13 +385,27 @@ async def restart(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "⏱️ *This confirmation will expire in 30 seconds*"
     )
 
-    await context.bot.send_message(
+    # Convert keyboard to dict for queue serialization
+    keyboard_dict = {
+        "inline_keyboard": [[
+            {"text": "✅ Yes, Restart Bot", "callback_data": f"{CALLBACK_RESTART_CONFIRM}{user.id}"},
+            {"text": "❌ Cancel", "callback_data": f"{CALLBACK_RESTART_CANCEL}{user.id}"}
+        ]]
+    }
+
+    # Create a custom queued message for restart confirmation
+    from dumpyarabot.message_queue import QueuedMessage, MessageType, MessagePriority
+    restart_message = QueuedMessage(
+        type=MessageType.NOTIFICATION,
+        priority=MessagePriority.URGENT,
         chat_id=chat.id,
-        reply_to_message_id=message.message_id,
         text=confirmation_text,
-        reply_markup=reply_markup,
         parse_mode="Markdown",
+        reply_to_message_id=message.message_id,
+        keyboard=keyboard_dict,
+        context={"command": "restart", "user_id": user.id, "confirmation": True}
     )
+    await message_queue.publish(restart_message)
 
 
 async def handle_restart_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -493,28 +508,27 @@ async def analyze(
     try:
         chat_member = await context.bot.get_chat_member(chat_id=chat.id, user_id=message.from_user.id)
         if chat_member.status not in ["administrator", "creator"]:
-            await context.bot.send_message(
+            await message_queue.send_error(
                 chat_id=chat.id,
-                reply_to_message_id=message.message_id,
                 text="❌ This command is restricted to chat administrators.",
+                context={"command": "analyze", "user_id": message.from_user.id, "error": "permission_denied"}
             )
             return
     except Exception as e:
         console.print(f"[red]Error checking admin status: {e}[/red]")
-        await context.bot.send_message(
+        await message_queue.send_error(
             chat_id=chat.id,
-            reply_to_message_id=message.message_id,
             text="❌ Error checking admin permissions.",
+            context={"command": "analyze", "user_id": message.from_user.id, "error": "admin_check_failed"}
         )
         return
 
     # Check if Gemini analyzer is available
     if not analyzer.is_available():
-        await context.bot.send_message(
+        await message_queue.send_error(
             chat_id=chat.id,
-            reply_to_message_id=message.message_id,
             text="❌ Gemini AI analyzer is not configured. Set GEMINI_API_KEY environment variable.",
-            parse_mode="HTML"
+            context={"command": "analyze", "error": "gemini_not_configured"}
         )
         return
 
@@ -525,11 +539,11 @@ async def analyze(
             "Example: `/analyze dumpyara 123`\n"
             "         `/analyze privdump 456`"
         )
-        await context.bot.send_message(
+        await message_queue.send_reply(
             chat_id=chat.id,
-            reply_to_message_id=message.message_id,
             text=usage,
-            parse_mode="Markdown",
+            reply_to_message_id=message.message_id,
+            context={"command": "analyze", "error": "missing_args"}
         )
         return
 
@@ -538,10 +552,10 @@ async def analyze(
 
     # Validate job name
     if job_name not in ["dumpyara", "privdump"]:
-        await context.bot.send_message(
+        await message_queue.send_error(
             chat_id=chat.id,
-            reply_to_message_id=message.message_id,
             text="❌ Invalid job name. Use 'dumpyara' or 'privdump'.",
+            context={"command": "analyze", "job_name": job_name, "error": "invalid_job_name"}
         )
         return
 
@@ -549,21 +563,20 @@ async def analyze(
     try:
         int(build_number)
     except ValueError:
-        await context.bot.send_message(
+        await message_queue.send_error(
             chat_id=chat.id,
-            reply_to_message_id=message.message_id,
             text="❌ Invalid build number. Must be a number.",
+            context={"command": "analyze", "build_number": build_number, "error": "invalid_build_number"}
         )
         return
 
     console.print(f"[green]Analyze request: {job_name} #{build_number}[/green]")
 
     # Send initial status message
-    status_message = await context.bot.send_message(
+    await message_queue.send_status_update(
         chat_id=chat.id,
-        reply_to_message_id=message.message_id,
         text=f"🔍 **Analyzing Jenkins log...**\n\nJob: `{job_name}`\nBuild: `#{build_number}`\n\n⏳ Fetching console log...",
-        parse_mode="Markdown",
+        context={"command": "analyze", "job_name": job_name, "build_number": build_number, "stage": "fetching_log"}
     )
 
     try:
@@ -571,11 +584,10 @@ async def analyze(
         console_log = await utils.get_jenkins_console_log(job_name, build_number)
 
         # Update status
-        await context.bot.edit_message_text(
+        await message_queue.send_status_update(
             chat_id=chat.id,
-            message_id=status_message.message_id,
             text=f"🔍 **Analyzing Jenkins log...**\n\nJob: `{job_name}`\nBuild: `#{build_number}`\n\n🤖 Running AI analysis...",
-            parse_mode="Markdown",
+            context={"command": "analyze", "job_name": job_name, "build_number": build_number, "stage": "ai_analysis"}
         )
 
         # Build info for analysis context
@@ -595,25 +607,23 @@ async def analyze(
             )
 
             # Update the status message with results
-            await context.bot.edit_message_text(
+            await message_queue.send_reply(
                 chat_id=chat.id,
-                message_id=status_message.message_id,
                 text=f"🔍 **AI Analysis Complete**\n\nJob: `{job_name}`\nBuild: `#{build_number}`\n\n{formatted_analysis}",
-                parse_mode="Markdown",
-                disable_web_page_preview=True,
+                reply_to_message_id=message.message_id,
+                context={"command": "analyze", "job_name": job_name, "build_number": build_number, "stage": "complete", "success": True}
             )
 
             console.print(f"[green]Successfully analyzed {job_name} #{build_number}[/green]")
 
         else:
             # Analysis failed
-            await context.bot.edit_message_text(
+            await message_queue.send_error(
                 chat_id=chat.id,
-                message_id=status_message.message_id,
                 text=f"❌ **Analysis Failed**\n\nJob: `{job_name}`\nBuild: `#{build_number}`\n\n"
                      f"The AI analysis could not be completed. The console log may be too short or the AI service may be unavailable.\n\n"
                      f"📊 <a href=\"{build_info['build_url']}\">View Build Details</a>",
-                parse_mode="HTML",
+                context={"command": "analyze", "job_name": job_name, "build_number": build_number, "stage": "failed", "success": False}
             )
 
     except Exception as e:
@@ -628,10 +638,9 @@ async def analyze(
         else:
             error_text = f"❌ **Analysis Error**\n\nJob: `{job_name}`\nBuild: `#{build_number}`\n\nError: {error_message}"
 
-        await context.bot.edit_message_text(
+        await message_queue.send_error(
             chat_id=chat.id,
-            message_id=status_message.message_id,
             text=error_text,
-            parse_mode="Markdown",
+            context={"command": "analyze", "job_name": job_name, "build_number": build_number, "stage": "error", "error": str(e)}
         )
 

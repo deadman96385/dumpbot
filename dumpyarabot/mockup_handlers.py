@@ -18,7 +18,6 @@ from dumpyarabot.ui import (REVIEW_TEMPLATE, create_options_keyboard,
                             create_review_keyboard)
 from dumpyarabot.utils import generate_request_id
 from dumpyarabot.config import settings
-from dumpyarabot.moderated_handlers import _truncate_message
 
 # Import main handlers to avoid duplication
 from dumpyarabot import moderated_handlers
@@ -151,7 +150,9 @@ async def mockup_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         username=fake_username, url=fake_url, request_id=request_id, original_message=fake_message
     )
 
-    # Send the first message (production-like review message)
+    # Send the first message (production-like review message) via queue
+    # Note: For mockups, we still need the message object, so we'll use a direct call here
+    # but add a TODO to potentially enhance message_queue to return message objects
     review_message = await context.bot.send_message(
         chat_id=chat.id,
         text=review_text,
@@ -657,7 +658,7 @@ async def _handle_submit_callback_with_mockup_state(
         )
     else:
         # For real requests, delegate to main handler
-        console.print(f"[cyan]Delegating to real moderated_handlers._handle_submit_callback[/cyan]")
+        console.print("[cyan]Delegating to real moderated_handlers._handle_submit_callback[/cyan]")
         await moderated_handlers._handle_submit_callback(query, context, callback_data)
 
 

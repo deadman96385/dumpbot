@@ -11,6 +11,7 @@ from dumpyarabot.config import (CALLBACK_ACCEPT, CALLBACK_CANCEL_REQUEST,
                                 CALLBACK_REJECT, CALLBACK_SUBMIT_ACCEPTANCE,
                                 CALLBACK_TOGGLE_ALT, CALLBACK_TOGGLE_FORCE,
                                 CALLBACK_TOGGLE_PRIVDUMP, settings)
+from dumpyarabot.message_queue import message_queue
 from dumpyarabot.storage import ReviewStorage
 from dumpyarabot.ui import (ACCEPTANCE_TEMPLATE, REJECTION_TEMPLATE, REVIEW_TEMPLATE, SUBMISSION_TEMPLATE,
                             create_options_keyboard, create_review_keyboard)
@@ -94,20 +95,35 @@ async def handle_request_message(
             original_message=original_message,
         )
 
-        review_message = await context.bot.send_message(
+        # Convert keyboard to dict for queue serialization
+        keyboard_dict = create_review_keyboard(request_id).to_dict()
+
+        # Create review message via queue with proper message_id handling
+        from dumpyarabot.message_queue import QueuedMessage, MessageType, MessagePriority
+        review_msg = QueuedMessage(
+            type=MessageType.NOTIFICATION,
+            priority=MessagePriority.HIGH,
             chat_id=settings.REVIEW_CHAT_ID,
             text=review_text,
-            reply_markup=create_review_keyboard(request_id),
+            parse_mode="Markdown",
+            keyboard=keyboard_dict,
             disable_web_page_preview=True,
+            context={"moderated_request": True, "request_id": request_id, "stage": "review"}
         )
+        review_message = await message_queue.publish_and_return_placeholder(review_msg)
 
-        # 6. Notify user of successful submission
-        submission_message = await context.bot.send_message(
+        # 6. Notify user of successful submission via message queue
+        submission_msg = QueuedMessage(
+            type=MessageType.NOTIFICATION,
+            priority=MessagePriority.HIGH,
             chat_id=chat.id,
-            reply_to_message_id=message.message_id,
             text=SUBMISSION_TEMPLATE.format(url=validated_url),
+            parse_mode="Markdown",
+            reply_to_message_id=message.message_id,
             disable_web_page_preview=True,
+            context={"moderated_request": True, "request_id": request_id, "stage": "submission_confirmation"}
         )
+        submission_message = await message_queue.publish_and_return_placeholder(submission_msg)
 
         # 7. Store PendingReview in bot_data (URL as string for Redis compatibility)
         pending_review = schemas.PendingReview(
@@ -128,18 +144,18 @@ async def handle_request_message(
 
     except ValidationError:
         console.print(f"[red]Invalid URL provided: {url_str}[/red]")
-        await context.bot.send_message(
+        await message_queue.send_error(
             chat_id=chat.id,
-            reply_to_message_id=message.message_id,
             text="❌ Invalid URL format provided",
+            context={"moderated_request": True, "url": url_str, "error": "invalid_url"}
         )
     except Exception as e:
         console.print(f"[red]Error processing request: {e}[/red]")
         console.print_exception()
-        await context.bot.send_message(
+        await message_queue.send_error(
             chat_id=chat.id,
-            reply_to_message_id=message.message_id,
             text="❌ An error occurred while processing your request",
+            context={"moderated_request": True, "url": url_str, "error": "processing_failed"}
         )
 
 
@@ -161,25 +177,25 @@ async def handle_callback_query(
 
     # Parse callback_data to determine action type
     if callback_data.startswith(CALLBACK_ACCEPT):
-        console.print(f"[cyan]Taking ACCEPT callback path[/cyan]")
+        console.print("[cyan]Taking ACCEPT callback path[/cyan]")
         await _handle_accept_callback(query, context, callback_data)
     elif callback_data.startswith(CALLBACK_REJECT):
-        console.print(f"[cyan]Taking REJECT callback path[/cyan]")
+        console.print("[cyan]Taking REJECT callback path[/cyan]")
         await _handle_reject_callback(query, context, callback_data)
     elif callback_data.startswith(CALLBACK_TOGGLE_ALT):
-        console.print(f"[cyan]Taking TOGGLE_ALT callback path[/cyan]")
+        console.print("[cyan]Taking TOGGLE_ALT callback path[/cyan]")
         await _handle_toggle_callback(query, context, callback_data, "alt")
     elif callback_data.startswith(CALLBACK_TOGGLE_FORCE):
-        console.print(f"[cyan]Taking TOGGLE_FORCE callback path[/cyan]")
+        console.print("[cyan]Taking TOGGLE_FORCE callback path[/cyan]")
         await _handle_toggle_callback(query, context, callback_data, "force")
     elif callback_data.startswith(CALLBACK_TOGGLE_PRIVDUMP):
-        console.print(f"[cyan]Taking TOGGLE_PRIVDUMP callback path[/cyan]")
+        console.print("[cyan]Taking TOGGLE_PRIVDUMP callback path[/cyan]")
         await _handle_toggle_callback(query, context, callback_data, "privdump")
     elif callback_data.startswith(CALLBACK_CANCEL_REQUEST):
-        console.print(f"[cyan]Taking CANCEL_REQUEST callback path[/cyan]")
+        console.print("[cyan]Taking CANCEL_REQUEST callback path[/cyan]")
         await _handle_cancel_callback(query, context, callback_data)
     elif callback_data.startswith(CALLBACK_SUBMIT_ACCEPTANCE):
-        console.print(f"[cyan]Taking SUBMIT_ACCEPTANCE callback path[/cyan]")
+        console.print("[cyan]Taking SUBMIT_ACCEPTANCE callback path[/cyan]")
         await _handle_submit_callback(query, context, callback_data)
     else:
         console.print(f"[red]Unknown callback data: {callback_data}[/red]")
@@ -293,10 +309,12 @@ async def _handle_submit_callback(
                 console.print(f"[green]Sending existing build acceptance message to user: {user_message}[/green]")
                 console.print(f"[blue]Chat ID: {pending_review.original_chat_id}, Message ID: {pending_review.original_message_id}[/blue]")
 
-                await context.bot.send_message(
-                    chat_id=pending_review.original_chat_id,
+                await message_queue.send_cross_chat(
+                    chat_id=settings.REVIEW_CHAT_ID,
                     text=user_message,
                     reply_to_message_id=pending_review.original_message_id,
+                    reply_to_chat_id=pending_review.original_chat_id,
+                    context={"moderated_request": True, "request_id": request_id, "stage": "existing_build_acceptance"}
                 )
 
                 console.print("[green]Existing build acceptance message sent successfully[/green]")
@@ -323,10 +341,12 @@ async def _handle_submit_callback(
         console.print(f"[green]Sending acceptance message to user: {user_message}[/green]")
         console.print(f"[blue]Chat ID: {pending_review.original_chat_id}, Message ID: {pending_review.original_message_id}[/blue]")
 
-        await context.bot.send_message(
-            chat_id=pending_review.original_chat_id,
+        await message_queue.send_cross_chat(
+            chat_id=settings.REVIEW_CHAT_ID,
             text=user_message,
             reply_to_message_id=pending_review.original_message_id,
+            reply_to_chat_id=pending_review.original_chat_id,
+            context={"moderated_request": True, "request_id": request_id, "stage": "acceptance"}
         )
 
         console.print("[green]Acceptance message sent successfully[/green]")
@@ -359,10 +379,10 @@ async def accept_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     # Ensure it can only be used in the correct review chat
     if chat.id != settings.REVIEW_CHAT_ID:
         console.print(f"[yellow]/accept used in wrong chat: {chat.id}[/yellow]")
-        await context.bot.send_message(
+        await message_queue.send_error(
             chat_id=chat.id,
-            reply_to_message_id=message.message_id,
             text="This command can only be used in the review chat",
+            context={"command": "accept", "error": "wrong_chat", "chat_id": chat.id}
         )
         return
 
@@ -381,21 +401,21 @@ async def accept_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             options = "".join(context.args) if context.args else ""
             console.print(f"[blue]Extracted request_id {request_id} from reply[/blue]")
         else:
-            await context.bot.send_message(
+            await message_queue.send_error(
                 chat_id=chat.id,
-                reply_to_message_id=message.message_id,
                 text="❌ Could not find a request ID in the replied message",
+                context={"command": "accept", "error": "no_request_id_in_reply"}
             )
             return
 
     # Fallback to traditional argument parsing if not in reply mode
     elif not request_id:
         if not context.args:
-            await context.bot.send_message(
+            await message_queue.send_reply(
                 chat_id=chat.id,
-                reply_to_message_id=message.message_id,
                 text="Usage: `/accept [request_id] [options]` or reply to a review message with `/accept [options]`\nOptions: a=alt, f=force, p=privdump",
-                parse_mode="Markdown",
+                reply_to_message_id=message.message_id,
+                context={"command": "accept", "error": "missing_args"}
             )
             return
 
@@ -405,10 +425,10 @@ async def accept_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     # Validate request_id exists in pending reviews
     pending_review = ReviewStorage.get_pending_review(context, request_id)
     if not pending_review:
-        await context.bot.send_message(
+        await message_queue.send_error(
             chat_id=chat.id,
-            reply_to_message_id=message.message_id,
             text=f"❌ Request {request_id} not found or expired",
+            context={"command": "accept", "error": "request_not_found", "request_id": request_id}
         )
         return
 
@@ -434,10 +454,11 @@ async def accept_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 console.print(
                     f"[yellow]Found existing build: {status_message}[/yellow]"
                 )
-                await context.bot.send_message(
+                await message_queue.send_reply(
                     chat_id=chat.id,
-                    reply_to_message_id=message.message_id,
                     text=f"✅ Request {request_id} processed\n{status_message}",
+                    reply_to_message_id=message.message_id,
+                    context={"command": "accept", "action": "existing_build_found", "request_id": request_id}
                 )
 
                 # Notify original requester with user-friendly message
@@ -451,10 +472,12 @@ async def accept_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 console.print(f"[green]Sending existing build acceptance message via command to user: {user_message}[/green]")
                 console.print(f"[blue]Chat ID: {pending_review.original_chat_id}, Message ID: {pending_review.original_message_id}[/blue]")
 
-                await context.bot.send_message(
+                await message_queue.send_cross_chat(
                     chat_id=pending_review.original_chat_id,
                     text=user_message,
                     reply_to_message_id=pending_review.original_message_id,
+                    reply_to_chat_id=pending_review.original_chat_id,
+                    context={"command": "accept", "action": "existing_build_notification", "request_id": request_id}
                 )
 
                 console.print("[green]Existing build acceptance message via command sent successfully[/green]")
@@ -467,10 +490,11 @@ async def accept_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         response_text = await utils.call_jenkins(dump_args)
         console.print(f"[green]Jenkins response: {response_text}[/green]")
 
-        await context.bot.send_message(
+        await message_queue.send_reply(
             chat_id=chat.id,
-            reply_to_message_id=message.message_id,
             text=f"✅ Request {request_id} accepted and {response_text}",
+            reply_to_message_id=message.message_id,
+            context={"command": "accept", "action": "jenkins_started", "request_id": request_id}
         )
 
         # Notify original requester with acceptance message
@@ -484,10 +508,12 @@ async def accept_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         console.print(f"[green]Sending acceptance message via command to user: {user_message}[/green]")
         console.print(f"[blue]Chat ID: {pending_review.original_chat_id}, Message ID: {pending_review.original_message_id}[/blue]")
 
-        await context.bot.send_message(
+        await message_queue.send_cross_chat(
             chat_id=pending_review.original_chat_id,
             text=user_message,
             reply_to_message_id=pending_review.original_message_id,
+            reply_to_chat_id=pending_review.original_chat_id,
+            context={"command": "accept", "action": "acceptance_notification", "request_id": request_id}
         )
 
         console.print("[green]Acceptance message via command sent successfully[/green]")
@@ -495,10 +521,10 @@ async def accept_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     except Exception as e:
         console.print(f"[red]Error processing acceptance: {e}[/red]")
         console.print_exception()
-        await context.bot.send_message(
+        await message_queue.send_error(
             chat_id=chat.id,
-            reply_to_message_id=message.message_id,
             text=f"❌ Error processing request {request_id}: {str(e)}",
+            context={"command": "accept", "error": "processing_exception", "request_id": request_id, "exception": str(e)}
         )
 
     # Clean up request data and submission message
@@ -517,10 +543,10 @@ async def reject_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     # Ensure it can only be used in the correct review chat
     if chat.id != settings.REVIEW_CHAT_ID:
         console.print(f"[yellow]/reject used in wrong chat: {chat.id}[/yellow]")
-        await context.bot.send_message(
+        await message_queue.send_error(
             chat_id=chat.id,
-            reply_to_message_id=message.message_id,
             text="This command can only be used in the review chat",
+            context={"command": "reject", "error": "wrong_chat", "chat_id": chat.id}
         )
         return
 
@@ -539,21 +565,21 @@ async def reject_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             reason = " ".join(context.args) if context.args else "No reason provided"
             console.print(f"[blue]Extracted request_id {request_id} from reply[/blue]")
         else:
-            await context.bot.send_message(
+            await message_queue.send_error(
                 chat_id=chat.id,
-                reply_to_message_id=message.message_id,
                 text="❌ Could not find a request ID in the replied message",
+                context={"command": "reject", "error": "no_request_id_in_reply"}
             )
             return
 
     # Fallback to traditional argument parsing if not in reply mode
     elif not request_id:
         if not context.args:
-            await context.bot.send_message(
+            await message_queue.send_reply(
                 chat_id=chat.id,
-                reply_to_message_id=message.message_id,
                 text="Usage: `/reject [request_id] [reason]` or reply to a review message with `/reject [reason]`",
-                parse_mode="Markdown",
+                reply_to_message_id=message.message_id,
+                context={"command": "reject", "error": "missing_args"}
             )
             return
 
@@ -565,10 +591,10 @@ async def reject_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     # Validate request_id exists
     pending_review = ReviewStorage.get_pending_review(context, request_id)
     if not pending_review:
-        await context.bot.send_message(
+        await message_queue.send_error(
             chat_id=chat.id,
-            reply_to_message_id=message.message_id,
             text=f"❌ Request {request_id} not found or expired",
+            context={"command": "reject", "error": "request_not_found", "request_id": request_id}
         )
         return
 
@@ -598,32 +624,34 @@ async def reject_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             console.print(f"[yellow]Could not delete command message: {e}[/yellow]")
 
         # Send cleaner final message in review chat with link to original request
-        await context.bot.send_message(
+        await message_queue.send_cross_chat(
             chat_id=chat.id,
             text=f"❌ Request {request_id} rejected by @{admin_name}\nReason: {reason}",
-            reply_parameters=ReplyParameters(
-                message_id=pending_review.original_message_id,
-                chat_id=pending_review.original_chat_id,
-            ),
+            reply_to_message_id=pending_review.original_message_id,
+            reply_to_chat_id=pending_review.original_chat_id,
+            context={"command": "reject", "action": "rejection_confirmation", "request_id": request_id, "admin": admin_name}
         )
 
         # Log rejection with reason
         console.print(f"[yellow]Request {request_id} rejected by @{admin_name}: {reason}[/yellow]")
 
         # Notify original requester with rejection message
-        await context.bot.send_message(
+        await message_queue.send_cross_chat(
             chat_id=pending_review.original_chat_id,
             text=REJECTION_TEMPLATE.format(reason=reason),
             reply_to_message_id=pending_review.original_message_id,
+            reply_to_chat_id=pending_review.original_chat_id,
+            context={"command": "reject", "action": "user_notification", "request_id": request_id}
         )
 
     except Exception as e:
         console.print(f"[red]Error processing rejection: {e}[/red]")
         console.print_exception()
         # Don't try to reply to the message since it might be deleted
-        await context.bot.send_message(
+        await message_queue.send_error(
             chat_id=chat.id,
             text=f"❌ Error processing rejection for request {request_id}: {str(e)}",
+            context={"command": "reject", "error": "processing_exception", "request_id": request_id, "exception": str(e)}
         )
 
     # Clean up request data and submission message
@@ -649,9 +677,10 @@ async def _handle_cancel_callback(
 
     try:
         # Send cancellation message in review chat
-        await context.bot.send_message(
+        await message_queue.send_notification(
             chat_id=pending.review_chat_id,
             text=f"🚫 Request {request_id} cancelled by user @{pending.requester_username}",
+            context={"action": "request_cancelled", "request_id": request_id, "user": pending.requester_username}
         )
 
         # Update submission confirmation message to show cancelled
