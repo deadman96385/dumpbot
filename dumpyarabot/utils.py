@@ -266,3 +266,110 @@ async def cancel_jenkins_job(job_id: str, use_privdump: bool = False) -> str:
                 f"[red]Error while cancelling {job_name} job {job_id}: {e}[/red]"
             )
             raise
+
+
+async def get_random_jenkins_build() -> Optional[Tuple[str, schemas.JenkinsBuild, str]]:
+    """Get a random Jenkins build with its console log for surprise image generation.
+
+    Returns:
+        Tuple of (job_name, build, console_log) or None if no suitable build found
+    """
+    console.print("[blue]Selecting random Jenkins build for surprise generation...[/blue]")
+
+    # Try both job types with preference for dumpyara
+    job_candidates = ["dumpyara", "privdump"]
+    import secrets
+
+    for job_name in job_candidates:
+        try:
+            # Get recent builds (limit to last 50 for performance)
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    f"{settings.JENKINS_URL}/job/{job_name}/api/json",
+                    params={
+                        "tree": "builds[number,result,timestamp]{0,50}"
+                    },
+                    auth=(settings.JENKINS_USER_NAME, settings.JENKINS_USER_TOKEN),
+                    timeout=30.0,
+                )
+                response.raise_for_status()
+
+                builds_data = response.json().get("builds", [])
+                if not builds_data:
+                    console.print(f"[yellow]No builds found for {job_name}[/yellow]")
+                    continue
+
+                # Filter for completed builds (both successful and failed are interesting)
+                completed_builds = [
+                    build for build in builds_data
+                    if build.get("result") in ["SUCCESS", "FAILURE", "UNSTABLE"]
+                ]
+
+                if not completed_builds:
+                    console.print(f"[yellow]No completed builds found for {job_name}[/yellow]")
+                    continue
+
+                # Select random completed build
+                selected_build_data = secrets.choice(completed_builds)
+                build_number = selected_build_data["number"]
+
+                console.print(f"[green]Selected random build: {job_name} #{build_number}[/green]")
+
+                # Create build object
+                build = schemas.JenkinsBuild(
+                    number=build_number,
+                    result=selected_build_data.get("result"),
+                    actions=None  # We don't need actions for surprise generation
+                )
+
+                # Fetch console log for this build
+                console_log = await get_jenkins_console_log(job_name, str(build_number))
+
+                return (job_name, build, console_log)
+
+        except Exception as e:
+            console.print(f"[yellow]Failed to get random build from {job_name}: {e}[/yellow]")
+            continue
+
+    console.print("[red]No suitable random builds found in any job[/red]")
+    return None
+
+
+async def get_build_summary_info(job_name: str, build: schemas.JenkinsBuild) -> str:
+    """Get formatted build summary information for display.
+
+    Args:
+        job_name: The Jenkins job name
+        build: The build object
+
+    Returns:
+        Formatted build summary string
+    """
+    try:
+        # Get build timestamp
+        timestamp_str = await get_jenkins_build_timestamp(job_name, str(build.number))
+
+        # Format result with emoji
+        result_emoji = {
+            "SUCCESS": "✅",
+            "FAILURE": "❌",
+            "UNSTABLE": "⚠️",
+            "ABORTED": "⏹️",
+        }.get(build.result, "❓")
+
+        # Build summary
+        summary_parts = [
+            f"**Job:** `{job_name}`",
+            f"**Build:** `#{build.number}`",
+            f"**Result:** {result_emoji} {build.result or 'Unknown'}"
+        ]
+
+        if timestamp_str:
+            summary_parts.append(f"**Date:** {timestamp_str}")
+
+        return "\n".join(summary_parts)
+
+    except Exception as e:
+        console.print(f"[yellow]Failed to get build summary info: {e}[/yellow]")
+        # Fallback summary
+        return f"**Job:** `{job_name}`\n**Build:** `#{build.number}`\n**Result:** {build.result or 'Unknown'}"

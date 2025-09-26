@@ -1,4 +1,5 @@
 from typing import Optional
+from io import BytesIO
 
 from pydantic import ValidationError
 from rich.console import Console
@@ -7,7 +8,7 @@ from telegram.ext import ContextTypes
 
 from dumpyarabot import schemas, utils
 from dumpyarabot.config import settings
-from dumpyarabot.gemini_analyzer import analyzer
+from dumpyarabot.gemini_analyzer import analyzer, image_generator
 from dumpyarabot.message_queue import message_queue
 
 console = Console()
@@ -642,5 +643,330 @@ async def analyze(
             chat_id=chat.id,
             text=error_text,
             context={"command": "analyze", "job_name": job_name, "build_number": build_number, "stage": "error", "error": str(e)}
+        )
+
+
+async def surprise(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Handler for the /surprise command - generate AI images based on random Jenkins logs.
+
+    Usage:
+    - /surprise - Generate image from random Jenkins build
+    - /surprise 123 - Generate image from specific Jenkins build #123
+    """
+    chat: Optional[Chat] = update.effective_chat
+    message: Optional[Message] = update.effective_message
+
+    if not chat or not message:
+        console.print("[red]Chat or message object is None[/red]")
+        return
+
+    # Parse command arguments for debug build number
+    debug_build_number: Optional[int] = None
+    if context.args and len(context.args) > 0:
+        try:
+            debug_build_number = int(context.args[0])
+            console.print(f"[magenta]Debug mode: Using Jenkins build #{debug_build_number}[/magenta]")
+        except ValueError:
+            await message_queue.send_error(
+                chat_id=chat.id,
+                text="❌ Invalid build number. Usage: `/surprise` or `/surprise 123`",
+                context={
+                    "command": "surprise",
+                    "user_id": message.from_user.id,
+                    "error": "invalid_build_number",
+                },
+            )
+            return
+
+    # Ensure it can only be used in allowed chats
+    if chat.id not in settings.ALLOWED_CHATS:
+        return
+
+    # Check if Gemini image generator is available
+    if not image_generator.is_available():
+        await message_queue.send_error(
+            chat_id=chat.id,
+            text="❌ Gemini AI image generator is not configured. Set GEMINI_API_KEY environment variable.",
+            context={"command": "surprise", "error": "gemini_not_configured"},
+        )
+        return
+
+    console.print("[green]Surprise command initiated[/green]")
+
+    # Send initial status message (immediate, so we can edit it later)
+    if debug_build_number is not None:
+        status_text = f"🔧 **Generating Debug Image...**\n\n⏳ Fetching Jenkins build #{debug_build_number}..."
+    else:
+        status_text = "🎲 **Generating Surprise Image...**\n\n⏳ Selecting random Jenkins build..."
+
+    initial_message = await message_queue.send_immediate_status_update(
+        chat_id=chat.id,
+        text=status_text,
+        context={"command": "surprise", "stage": "selecting_build", "debug_build": debug_build_number},
+    )
+
+    try:
+        if debug_build_number is not None:
+            # Debug mode: use specific build number
+            console.print(f"[magenta]Debug mode: Generating image for build #{debug_build_number}[/magenta]")
+
+            # We'll let the image generator fetch the console log directly
+            # Set up minimal build info for context
+            job_name = "dumpyara"
+            build = schemas.JenkinsBuild(number=debug_build_number, result=None, actions=None)  # Mock build object
+            console_log = ""  # Will be fetched by image generator
+
+        else:
+            # Normal mode: Get random Jenkins build with retry logic
+            max_retries = 3
+            build_result = None
+
+            for attempt in range(max_retries):
+                console.print(f"[blue]Attempting to get random build (attempt {attempt + 1}/{max_retries})[/blue]")
+
+                build_result = await utils.get_random_jenkins_build()
+
+                if not build_result:
+                    console.print(f"[yellow]No builds found on attempt {attempt + 1}[/yellow]")
+                    continue
+
+                job_name, build, console_log = build_result
+
+                # Pre-validate the build before trying image generation
+                if not console_log or len(console_log.strip()) < 50:
+                    console.print(f"[yellow]Build #{build.number} has insufficient log content, trying another... (attempt {attempt + 1})[/yellow]")
+                    continue
+
+                # Build looks good, break out of retry loop
+                console.print(f"[green]Found suitable build #{build.number} with {len(console_log)} chars[/green]")
+                break
+
+            if not build_result or not console_log or len(console_log.strip()) < 50:
+                # Edit status message to show no builds found after retries
+                await message_queue.send_status_update(
+                    chat_id=chat.id,
+                    text=f"❌ **No Suitable Builds Found**\n\nTried {max_retries} different builds but couldn't find any with meaningful content for image generation. Try again later when more builds are available.",
+                    edit_message_id=initial_message.message_id,
+                    context={"command": "surprise", "error": "no_builds_found_after_retries", "attempts": max_retries},
+                )
+                return
+
+            job_name, build, console_log = build_result
+
+        # Update status by editing the initial message
+        await message_queue.send_status_update(
+            chat_id=chat.id,
+            text=f"🎲 **Generating Surprise Image...**\n\nJob: `{job_name}`\nBuild: `#{build.number}`\n\n🤖 Analyzing build log and generating image...",
+            edit_message_id=initial_message.message_id,
+            context={
+                "command": "surprise",
+                "job_name": job_name,
+                "build_number": build.number,
+                "stage": "generating_image",
+            },
+        )
+
+        # Build info for image generation context
+        build_info = {
+            "job_name": job_name,
+            "build_number": build.number,
+            "build_url": f"{settings.JENKINS_URL}/job/{job_name}/{build.number}/",
+        }
+
+        # Generate surprise image with retry logic for normal mode
+        image_data = await image_generator.generate_surprise_image(
+            console_log, build_info, debug_build_number
+        )
+
+        # If image generation failed and we're in normal mode, try once more with a different build
+        if not image_data and debug_build_number is None:
+            console.print("[yellow]Image generation failed, trying one more random build...[/yellow]")
+
+            # Update status to show retry
+            await message_queue.send_status_update(
+                chat_id=chat.id,
+                text=f"🎲 **Retrying Image Generation...**\n\nFirst build didn't work out, trying another random build...",
+                edit_message_id=initial_message.message_id,
+                context={
+                    "command": "surprise",
+                    "stage": "retrying_with_different_build",
+                },
+            )
+
+            # Try one more random build
+            retry_build_result = await utils.get_random_jenkins_build()
+
+            if retry_build_result:
+                retry_job_name, retry_build, retry_console_log = retry_build_result
+
+                if retry_console_log and len(retry_console_log.strip()) >= 50:
+                    console.print(f"[blue]Retrying with build #{retry_build.number}[/blue]")
+
+                    # Update build info
+                    job_name, build, console_log = retry_job_name, retry_build, retry_console_log
+                    build_info = {
+                        "job_name": job_name,
+                        "build_number": build.number,
+                        "build_url": f"{settings.JENKINS_URL}/job/{job_name}/{build.number}/",
+                    }
+
+                    # Update status with new build info
+                    await message_queue.send_status_update(
+                        chat_id=chat.id,
+                        text=f"🎲 **Generating Surprise Image (Retry)...**\n\nJob: `{job_name}`\nBuild: `#{build.number}`\n\n🤖 Analyzing build log and generating image...",
+                        edit_message_id=initial_message.message_id,
+                        context={
+                            "command": "surprise",
+                            "job_name": job_name,
+                            "build_number": build.number,
+                            "stage": "generating_image_retry",
+                        },
+                    )
+
+                    # Try image generation again
+                    image_data = await image_generator.generate_surprise_image(
+                        console_log, build_info, None  # No debug build number for retry
+                    )
+
+        if image_data:
+            # Get build summary info
+            build_summary = await utils.get_build_summary_info(job_name, build)
+
+            try:
+                # Try to decode as text first (fallback description)
+                content_text = image_data.decode("utf-8")
+
+                # If it's a text description, send as formatted message
+                if content_text.startswith("🎨"):
+                    success_text = (
+                        f"🎲 **Surprise Generated!**\n\n"
+                        f"{build_summary}\n\n"
+                        f"{content_text}\n\n"
+                        f"📊 [View Original Build]({build_info['build_url']})"
+                    )
+
+                    await message_queue.send_reply(
+                        chat_id=chat.id,
+                        text=success_text,
+                        reply_to_message_id=message.message_id,
+                        context={
+                            "command": "surprise",
+                            "job_name": job_name,
+                            "build_number": build.number,
+                            "success": True,
+                            "type": "description",
+                        },
+                    )
+
+                    # Delete the status message since info is now in the final message
+                    try:
+                        await context.bot.delete_message(
+                            chat_id=chat.id, message_id=initial_message.message_id
+                        )
+                    except Exception as delete_error:
+                        console.print(
+                            f"[yellow]Could not delete status message: {delete_error}[/yellow]"
+                        )
+
+                    console.print(
+                        f"[green]Successfully generated surprise description for {job_name} #{build.number}[/green]"
+                    )
+
+            except UnicodeDecodeError:
+                # It's actual image data, try to send as photo
+                try:
+                    import io
+
+                    image_file = io.BytesIO(image_data)
+                    image_file.name = f"dumpyara_surprise_{job_name}_{build.number}.png"
+
+                    caption = (
+                        f"🎉 **Dumpyara Surprise!**\n\n"
+                        f"{build_summary}\n\n"
+                        f"🤖 *Generated with Gemini 2.5-flash*\n"
+                        f"📊 [View Original Build]({build_info['build_url']})"
+                    )
+
+                    # Use context.bot to send photo directly
+                    await context.bot.send_photo(
+                        chat_id=chat.id,
+                        photo=image_file,
+                        caption=caption,
+                        parse_mode="Markdown",
+                        reply_to_message_id=message.message_id,
+                    )
+
+                    # Delete the status message since info is now in the final message
+                    try:
+                        await context.bot.delete_message(
+                            chat_id=chat.id, message_id=initial_message.message_id
+                        )
+                    except Exception as delete_error:
+                        console.print(
+                            f"[yellow]Could not delete status message: {delete_error}[/yellow]"
+                        )
+
+                    console.print(
+                        f"[green]Successfully sent surprise image for {job_name} #{build.number}[/green]"
+                    )
+
+                except Exception as send_error:
+                    console.print(f"[red]Failed to send image: {send_error}[/red]")
+
+                    # Edit status message to show failure instead of creating new message
+                    failure_text = f"❌ **Image Send Failed**\n\nJob: `{job_name}`\nBuild: `#{build.number}`\n\nImage was generated but failed to send: {str(send_error)[:100]}{'...' if len(str(send_error)) > 100 else ''}\n\n📊 [View Build Details]({build_info['build_url']})"
+
+                    await message_queue.send_status_update(
+                        chat_id=chat.id,
+                        text=failure_text,
+                        edit_message_id=initial_message.message_id,
+                        context={
+                            "command": "surprise",
+                            "job_name": job_name,
+                            "build_number": build.number,
+                            "success": False,
+                            "error": "image_send_failed",
+                        },
+                    )
+
+        else:
+            # Image generation failed - edit status message to show failure
+            failure_text = f"❌ **Image Generation Failed**\n\nJob: `{job_name}`\nBuild: `#{build.number}`\n\nThe AI image generation could not be completed. This may be due to:\n• Insufficient build log content\n• AI service limitations\n• Network connectivity issues\n\n📊 [View Build Details]({build_info['build_url']})"
+
+            await message_queue.send_status_update(
+                chat_id=chat.id,
+                text=failure_text,
+                edit_message_id=initial_message.message_id,
+                context={
+                    "command": "surprise",
+                    "job_name": job_name,
+                    "build_number": build.number,
+                    "success": False,
+                    "error": "image_generation_failed",
+                },
+            )
+
+    except Exception as e:
+        console.print(f"[red]Error generating surprise image: {e}[/red]")
+
+        # Edit status message to show error instead of creating new message
+        error_message = str(e)
+        if "404" in error_message:
+            error_text = "❌ **Build Not Found**\n\nThe selected build no longer exists or is inaccessible."
+        elif "403" in error_message or "401" in error_message:
+            error_text = (
+                "❌ **Access Denied**\n\nCheck Jenkins credentials and permissions."
+            )
+        else:
+            error_text = f"❌ **Surprise Generation Error**\n\nUnexpected error: {error_message[:100]}{'...' if len(error_message) > 100 else ''}"
+
+        await message_queue.send_status_update(
+            chat_id=chat.id,
+            text=error_text,
+            edit_message_id=initial_message.message_id,
+            context={"command": "surprise", "stage": "error", "error": str(e)},
         )
 

@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     # Gemini AI configuration for log analysis
     GEMINI_API_KEY: str | None = None
 
+    # OpenAI API configuration for image generation
+    OPENAI_API_KEY: str | None = None
+
     model_config = SettingsConfigDict(env_file=".env")
 
 
@@ -55,7 +58,8 @@ INTERNAL_COMMANDS = [
 
 ADMIN_COMMANDS = [
     ("restart", "Restart the bot"),
-    ("analyze", "Analyze Jenkins console log with AI")
+    ("analyze", "Analyze Jenkins console log with AI"),
+    ("surprise", "Generate surprise image from random build log")
 ]
 
 EMPTY_COMMANDS = []

@@ -219,3 +219,6 @@ class GeminiLogAnalyzer:
 
 # Create global analyzer instance
 analyzer = GeminiLogAnalyzer()
+
+# Import image generator from separate module
+from dumpyarabot.gemini_image_generator import image_generator

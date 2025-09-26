@@ -210,6 +210,35 @@ class MessageQueue:
         message_id = await self.publish(message)
         return self.MessagePlaceholder(message_id, message.chat_id)
 
+    async def send_immediate_status_update(
+        self,
+        chat_id: int,
+        text: str,
+        context: Optional[Dict[str, Any]] = None
+    ) -> "MessageQueue.MessagePlaceholder":
+        """Send a status update message immediately and return a message placeholder for tracking.
+
+        This method is used when you need to get a message reference immediately
+        for later editing or tracking purposes.
+
+        Args:
+            chat_id: The Telegram chat ID
+            text: The status message text
+            context: Optional context for tracking
+
+        Returns:
+            MessagePlaceholder object with message_id for tracking
+        """
+        message = QueuedMessage(
+            type=MessageType.STATUS_UPDATE,
+            priority=MessagePriority.HIGH,  # Higher priority for immediate messages
+            chat_id=chat_id,
+            text=text,
+            parse_mode="Markdown",
+            context=context or {}
+        )
+        return await self.publish_and_return_placeholder(message)
+
     def set_bot(self, bot: Bot) -> None:
         """Set the Telegram bot instance."""
         self._bot = bot
