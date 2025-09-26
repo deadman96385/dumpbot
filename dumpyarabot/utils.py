@@ -46,6 +46,9 @@ def _is_matching_build(
     build: schemas.JenkinsBuild, args: schemas.DumpArguments
 ) -> bool:
     """Check if a build matches the given arguments."""
+    if not build.actions:
+        return False
+
     for action in build.actions:
         if "parameters" in action:
             params = {param["name"]: param["value"] for param in action["parameters"]}

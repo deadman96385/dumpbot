@@ -1,7 +1,8 @@
 import logging
 from typing import Optional, Dict, Any
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from rich.console import Console
 
 from dumpyarabot.config import settings
@@ -65,12 +66,16 @@ class GeminiLogAnalyzer:
     def _initialize_model(self) -> None:
         """Initialize the Gemini model if API key is available."""
         if not self.api_key:
-            console.print("[yellow]GEMINI_API_KEY not configured - log analysis disabled[/yellow]")
+            console.print(
+                "[yellow]GEMINI_API_KEY not configured - log analysis disabled[/yellow]"
+            )
             return
 
         try:
-            genai.configure(api_key=self.api_key)
-            self.model = genai.GenerativeModel("gemini-2.5-pro")
+            import google.generativeai as genai_legacy
+
+            genai_legacy.configure(api_key=self.api_key)
+            self.model = genai_legacy.GenerativeModel("gemini-2.5-pro")
             console.print("[green]Gemini AI log analyzer initialized[/green]")
         except Exception as e:
             console.print(f"[red]Failed to initialize Gemini model: {e}[/red]")
@@ -80,7 +85,9 @@ class GeminiLogAnalyzer:
         """Check if the analyzer is available for use."""
         return self.model is not None
 
-    async def analyze_jenkins_log(self, console_log: str, build_info: Optional[Dict[str, Any]] = None) -> Optional[str]:
+    async def analyze_jenkins_log(
+        self, console_log: str, build_info: Optional[Dict[str, Any]] = None
+    ) -> Optional[str]:
         """
         Analyze Jenkins console log for failure patterns and suggestions.
 
@@ -92,11 +99,15 @@ class GeminiLogAnalyzer:
             Formatted analysis string or None if analysis fails
         """
         if not self.is_available():
-            console.print("[yellow]Gemini analyzer not available - skipping log analysis[/yellow]")
+            console.print(
+                "[yellow]Gemini analyzer not available - skipping log analysis[/yellow]"
+            )
             return None
 
         if not console_log or len(console_log.strip()) < 50:
-            console.print("[yellow]Console log too short for meaningful analysis[/yellow]")
+            console.print(
+                "[yellow]Console log too short for meaningful analysis[/yellow]"
+            )
             return None
 
         try:
@@ -104,8 +115,8 @@ class GeminiLogAnalyzer:
             max_log_length = 50000  # Approximately 50KB
             if len(console_log) > max_log_length:
                 # Take first and last portions to capture both setup and failure
-                first_part = console_log[:max_log_length//2]
-                last_part = console_log[-max_log_length//2:]
+                first_part = console_log[: max_log_length // 2]
+                last_part = console_log[-max_log_length // 2 :]
                 console_log = f"{first_part}\n\n... [LOG TRUNCATED] ...\n\n{last_part}"
                 console.print("[yellow]Console log truncated for analysis[/yellow]")
 
@@ -131,7 +142,9 @@ class GeminiLogAnalyzer:
             logger.error(f"Gemini analysis failed: {e}")
             return None
 
-    def format_analysis_for_telegram(self, analysis: str, build_url: str = "", build_date: str = "") -> str:
+    def format_analysis_for_telegram(
+        self, analysis: str, build_url: str = "", build_date: str = ""
+    ) -> str:
         """
         Format the analysis for Telegram messaging.
 
@@ -147,7 +160,7 @@ class GeminiLogAnalyzer:
             return ""
 
         # Format each line with proper Markdown tags
-        lines = analysis.strip().split('\n')
+        lines = analysis.strip().split("\n")
         formatted_lines = []
         error_category = ""
         pipeline_stage = ""
@@ -158,12 +171,12 @@ class GeminiLogAnalyzer:
             if not line:
                 continue
 
-            if line.startswith('Root Cause:'):
+            if line.startswith("Root Cause:"):
                 formatted_lines.append(f"**Root Cause:** {line[11:].strip()}")
-            elif line.startswith('Error Category:'):
+            elif line.startswith("Error Category:"):
                 error_category = line[15:].strip()
                 formatted_lines.append(f"**Error Category:** {error_category}")
-            elif line.startswith('Pipeline Stage:'):
+            elif line.startswith("Pipeline Stage:"):
                 pipeline_stage = line[15:].strip()
             else:
                 formatted_lines.append(line)
@@ -175,11 +188,13 @@ class GeminiLogAnalyzer:
             pipeline_stage_lower = pipeline_stage.lower()
 
             # Don't show pipeline stage if it's the same or if error category contains the stage name
-            if (pipeline_stage_lower != error_category_lower and
-                pipeline_stage_lower not in error_category_lower):
+            if (
+                pipeline_stage_lower != error_category_lower
+                and pipeline_stage_lower not in error_category_lower
+            ):
                 formatted_lines.append(f"**Pipeline Stage:** {pipeline_stage}")
 
-        formatted = '\n'.join(formatted_lines)
+        formatted = "\n".join(formatted_lines)
 
         # Add build date if provided
         if build_date:
@@ -187,12 +202,16 @@ class GeminiLogAnalyzer:
 
         # Add AI attribution and build link
         model_name = "Gemini AI"
-        if self.model and hasattr(self.model, '_model_name'):
+        if self.model and hasattr(self.model, "_model_name"):
             model_name = self.model._model_name
 
         footer = f"\n\n*🤖 Analysis by {model_name}*"
         if build_url:
-            console_url = f"{build_url}/console" if not build_url.endswith('/console') else build_url
+            console_url = (
+                f"{build_url}/console"
+                if not build_url.endswith("/console")
+                else build_url
+            )
             footer += f"\n📊 [View Console Output]({console_url})"
 
         return formatted + footer

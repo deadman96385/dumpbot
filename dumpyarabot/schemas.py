@@ -6,7 +6,7 @@ from pydantic import AnyHttpUrl, BaseModel
 class JenkinsBuild(BaseModel):
     number: int
     result: Optional[str]
-    actions: List[Dict]
+    actions: Optional[List[Dict]] = None
 
 
 class DumpArguments(BaseModel):
