@@ -1,4 +1,6 @@
 import re
+from datetime import datetime, timezone
+import secrets
 from typing import Any, Optional
 
 from pydantic import ValidationError
@@ -293,46 +295,18 @@ async def _handle_submit_callback(
             initial_chat_id=pending_review.original_chat_id,
         )
 
-        # Start dump process using existing logic
-        if not options_state.force:
-            console.print("[blue]Checking for existing builds...[/blue]")
-            exists, status_message = await utils.check_existing_build(dump_args)
-            if exists:
-                console.print(
-                    f"[yellow]Found existing build: {status_message}[/yellow]"
-                )
-                # Notify original requester with user-friendly message
-                if options_state.privdump:
-                    user_message = (
-                        "Your request is under further review for private processing."
-                    )
-                else:
-                    escaped_status = escape_markdown(status_message)
-                    user_message = f"{ACCEPTANCE_TEMPLATE}\n{escaped_status}"
+        # Create and queue dump job
+        job = schemas.DumpJob(
+            job_id=secrets.token_hex(8),
+            dump_args=dump_args,
+            created_at=datetime.now(timezone.utc),
+            initial_message_id=pending_review.original_message_id,
+            initial_chat_id=pending_review.original_chat_id
+        )
 
-                console.print(f"[green]Sending existing build acceptance message to user: {user_message}[/green]")
-                console.print(f"[blue]Chat ID: {pending_review.original_chat_id}, Message ID: {pending_review.original_message_id}[/blue]")
-
-                await message_queue.send_cross_chat(
-                    chat_id=settings.REVIEW_CHAT_ID,
-                    text=user_message,
-                    reply_to_message_id=pending_review.original_message_id,
-                    reply_to_chat_id=pending_review.original_chat_id,
-                    context={"moderated_request": True, "request_id": request_id, "stage": "existing_build_acceptance"}
-                )
-
-                console.print("[green]Existing build acceptance message sent successfully[/green]")
-
-                # Delete the admin confirmation message after processing
-                await query.delete_message()
-
-                # Clean up request data and submission message
-                await _cleanup_request(context, request_id)
-                return
-
-        console.print("[blue]Calling Jenkins to start build...[/blue]")
-        response_text = await utils.call_jenkins(dump_args)
-        console.print(f"[green]Jenkins response: {response_text}[/green]")
+        console.print(f"[blue]Queueing dump job {job.job_id}...[/blue]")
+        job_id = await message_queue.queue_dump_job(job)
+        console.print(f"[green]Successfully queued dump job {job_id}[/green]")
 
         # Notify original requester with acceptance message
         if options_state.privdump:
@@ -451,56 +425,25 @@ async def accept_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             initial_chat_id=pending_review.original_chat_id,
         )
 
-        if not force:
-            console.print("[blue]Checking for existing builds...[/blue]")
-            exists, status_message = await utils.check_existing_build(dump_args)
-            if exists:
-                console.print(
-                    f"[yellow]Found existing build: {status_message}[/yellow]"
-                )
-                escaped_status = escape_markdown(status_message)
-                await message_queue.send_reply(
-                    chat_id=chat.id,
-                    text=f"✅ Request {request_id} processed\n{escaped_status}",
-                    reply_to_message_id=message.message_id,
-                    context={"command": "accept", "action": "existing_build_found", "request_id": request_id}
-                )
+        # Create and queue dump job
+        job = schemas.DumpJob(
+            job_id=secrets.token_hex(8),
+            dump_args=dump_args,
+            created_at=datetime.now(timezone.utc),
+            initial_message_id=pending_review.original_message_id,
+            initial_chat_id=pending_review.original_chat_id
+        )
 
-                # Notify original requester with user-friendly message
-                if use_privdump:
-                    user_message = (
-                        "Your request is under further review for private processing."
-                    )
-                else:
-                    escaped_status = escape_markdown(status_message)
-                    user_message = f"{ACCEPTANCE_TEMPLATE}\n{escaped_status}"
-
-                console.print(f"[green]Sending existing build acceptance message via command to user: {user_message}[/green]")
-                console.print(f"[blue]Chat ID: {pending_review.original_chat_id}, Message ID: {pending_review.original_message_id}[/blue]")
-
-                await message_queue.send_cross_chat(
-                    chat_id=pending_review.original_chat_id,
-                    text=user_message,
-                    reply_to_message_id=pending_review.original_message_id,
-                    reply_to_chat_id=pending_review.original_chat_id,
-                    context={"command": "accept", "action": "existing_build_notification", "request_id": request_id}
-                )
-
-                console.print("[green]Existing build acceptance message via command sent successfully[/green]")
-
-                # Clean up request data and submission message
-                await _cleanup_request(context, request_id)
-                return
-
-        console.print("[blue]Calling Jenkins to start build...[/blue]")
-        response_text = await utils.call_jenkins(dump_args)
-        console.print(f"[green]Jenkins response: {response_text}[/green]")
+        console.print(f"[blue]Queueing dump job {job.job_id}...[/blue]")
+        job_id = await message_queue.queue_dump_job(job)
+        console.print(f"[green]Successfully queued dump job {job_id}[/green]")
+        response_text = f"job queued with ID {job_id}"
 
         await message_queue.send_reply(
             chat_id=chat.id,
             text=f"✅ Request {request_id} accepted and {response_text}",
             reply_to_message_id=message.message_id,
-            context={"command": "accept", "action": "jenkins_started", "request_id": request_id}
+            context={"command": "accept", "action": "arq_queued", "request_id": request_id}
         )
 
         # Notify original requester with acceptance message

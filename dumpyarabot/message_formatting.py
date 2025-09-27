@@ -301,7 +301,7 @@ def format_build_summary_info(
     Format build summary information for display.
 
     Args:
-        job_name: Jenkins job name
+        job_name: Job name
         build_number: Build number
         result: Build result (SUCCESS, FAILURE, etc.)
         timestamp_str: Build timestamp string

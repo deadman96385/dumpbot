@@ -4,7 +4,7 @@ import sys
 from telegram.ext import (ApplicationBuilder, CallbackQueryHandler,
                           CommandHandler, MessageHandler, filters, JobQueue)
 
-from dumpyarabot.handlers import analyze, blacklist, cancel_dump, dump, help_command, restart, status, surprise
+from dumpyarabot.handlers import blacklist, cancel_dump, dump, help_command, restart, status
 from dumpyarabot.message_queue import message_queue
 from dumpyarabot.mockup_handlers import (handle_enhanced_callback_query,
                                          mockup_command)
@@ -114,11 +114,6 @@ if __name__ == "__main__":
     # Restart handler - now fully implemented
     restart_handler = CommandHandler("restart", restart)
 
-    # AI log analysis handler
-    analyze_handler = CommandHandler("analyze", analyze)
-
-    # Surprise image generation handler
-    surprise_handler = CommandHandler("surprise", surprise)
 
     # Add all handlers
     application.add_handler(dump_handler)
@@ -137,8 +132,6 @@ if __name__ == "__main__":
 
     # Register bot commands on startup (if job queue is available)
     if application.job_queue:
-        # Initialize ARQ system first
-        application.job_queue.run_once(initialize_arq, 0)
 
         # Initialize message queue system
         application.job_queue.run_once(initialize_message_queue, 1)

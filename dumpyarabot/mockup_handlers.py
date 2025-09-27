@@ -8,7 +8,7 @@ if TYPE_CHECKING:
     from telegram import InlineKeyboardMarkup
 
 from dumpyarabot.config import (CALLBACK_ACCEPT, CALLBACK_CANCEL_REQUEST,
-                                CALLBACK_JENKINS_CANCEL, CALLBACK_REJECT,
+                                CALLBACK_REJECT,
                                 CALLBACK_RESTART_CANCEL, CALLBACK_RESTART_CONFIRM,
                                 CALLBACK_SUBMIT_ACCEPTANCE, CALLBACK_TOGGLE_ALT,
                                 CALLBACK_TOGGLE_FORCE, CALLBACK_TOGGLE_PRIVDUMP)
@@ -570,8 +570,6 @@ async def handle_enhanced_callback_query(
         # Import restart handler here to avoid circular imports
         from dumpyarabot.handlers import handle_restart_callback
         await handle_restart_callback(update, context)
-    elif callback_data.startswith(CALLBACK_JENKINS_CANCEL):
-        await _handle_jenkins_cancel_callback(query, context, callback_data)
 
 
 # Mockup-aware versions that handle state + delegate to main handlers
@@ -694,50 +692,3 @@ async def _handle_cancel_callback_with_mockup_state(
         await moderated_handlers._handle_cancel_callback(query, context, callback_data)
 
 
-async def _handle_jenkins_cancel_callback(
-    query: Any, context: ContextTypes.DEFAULT_TYPE, callback_data: str
-) -> None:
-    """Handle Jenkins job cancellation callback."""
-    # Extract job_name and build_id from callback data
-    # Format: "jenkins_cancel_job_name:build_id"
-    cancel_data = callback_data.replace(CALLBACK_JENKINS_CANCEL, "")
-
-    if ":" not in cancel_data:
-        await query.edit_message_text("❌ Invalid cancellation data")
-        return
-
-    job_name, build_id = cancel_data.split(":", 1)
-
-    # Check admin permissions
-    user = query.from_user
-    if not user or user.id not in settings.SUDO_USERS:
-        await query.answer("❌ You don't have permission to cancel jobs", show_alert=True)
-        return
-
-    try:
-        from dumpyarabot import utils
-
-        # Use the existing cancel_jenkins_job function
-        use_privdump = job_name == "privdump"
-        response_message = await utils.cancel_jenkins_job(build_id, use_privdump)
-
-        # Update the message to show cancellation status
-        await query.edit_message_text(
-            text=f"🛑 **Job Cancellation**\n\n"
-                 f"👤 **Cancelled by:** {user.mention_markdown()}\n"
-                 f"🔧 **Job:** {job_name}\n"
-                 f"🆔 **Build ID:** {build_id}\n\n"
-                 f"📊 **Status:** {response_message}",
-            parse_mode=settings.DEFAULT_PARSE_MODE
-        )
-
-        # Remove the build from active tracking
-        ReviewStorage.remove_active_build(context, build_id)
-
-    except Exception as e:
-        await query.edit_message_text(
-            text=f"❌ **Error Cancelling Job**\n\n"
-                 f"🆔 **Build ID:** {build_id}\n"
-                 f"⚠️ **Error:** {str(e)}",
-            parse_mode=settings.DEFAULT_PARSE_MODE
-        )

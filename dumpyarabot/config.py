@@ -5,9 +5,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     TELEGRAM_BOT_TOKEN: str
 
-    JENKINS_URL: AnyHttpUrl
-    JENKINS_USER_NAME: str
-    JENKINS_USER_TOKEN: str
 
     SUDO_USERS: list[int] = []
 
@@ -24,13 +21,8 @@ class Settings(BaseSettings):
     # Telegram formatting configuration
     DEFAULT_PARSE_MODE: str = "Markdown"
 
-    # Gemini AI configuration for log analysis
-    GEMINI_API_KEY: str | None = None
 
-    # OpenAI API configuration for image generation
-    OPENAI_API_KEY: str | None = None
-
-    model_config = SettingsConfigDict(env_file=".env")
+    model_config = SettingsConfigDict(env_file=".env", extra='ignore')
 
 
 settings = Settings()
@@ -53,7 +45,7 @@ USER_COMMANDS = [
 ]
 
 INTERNAL_COMMANDS = [
-    ("cancel", "Cancel a running Jenkins job"),
+    ("cancel", "Cancel a running dump job"),
     ("accept", "Accept a pending dump request"),
     ("reject", "Reject a pending dump request"),
     ("mockup", "Test the moderated request flow")
@@ -61,8 +53,6 @@ INTERNAL_COMMANDS = [
 
 ADMIN_COMMANDS = [
     ("restart", "Restart the bot"),
-    ("analyze", "Analyze Jenkins console log with AI"),
-    ("surprise", "Generate surprise image from random build log")
 ]
 
 EMPTY_COMMANDS = []
@@ -75,5 +65,3 @@ RESTART_CONFIRMATION_TIMEOUT = 30  # seconds
 CALLBACK_RESTART_CONFIRM = "restart_confirm_"
 CALLBACK_RESTART_CANCEL = "restart_cancel_"
 
-# Jenkins job management
-CALLBACK_JENKINS_CANCEL = "jenkins_cancel_"

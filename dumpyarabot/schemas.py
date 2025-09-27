@@ -5,11 +5,6 @@ from typing import Dict, List, Optional, Any
 from pydantic import AnyHttpUrl, BaseModel
 
 
-class JenkinsBuild(BaseModel):
-    number: int
-    result: Optional[str]
-    actions: Optional[List[Dict]] = None
-
 
 class DumpArguments(BaseModel):
     url: AnyHttpUrl
@@ -45,12 +40,6 @@ class MockupState(BaseModel):
     original_command_message_id: int = 0
 
 
-class ActiveJenkinsBuild(BaseModel):
-    job_name: str  # "dumpyara" or "privdump"
-    build_id: str
-    url: AnyHttpUrl
-    requester_username: Optional[str] = None
-    request_id: Optional[str] = None
 
 
 class JobStatus(str, Enum):
