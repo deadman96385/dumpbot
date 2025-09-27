@@ -1,6 +1,3 @@
-import asyncio
-import json
-import subprocess
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple
 
@@ -9,6 +6,8 @@ from rich.console import Console
 
 from dumpyarabot.config import settings
 from dumpyarabot.utils import escape_markdown
+from dumpyarabot.process_utils import run_git_command
+from dumpyarabot.message_formatting import format_channel_notification_message
 
 console = Console()
 
@@ -155,54 +154,40 @@ class GitLabManager:
         console.print("[blue]Setting up git repository...[/blue]")
 
         # Initialize git repository
-        result = await asyncio.create_subprocess_exec(
-            "git", "init", "--initial-branch", branch,
+        await run_git_command(
+            "init", "--initial-branch", branch,
             cwd=self.work_dir,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
+            description="Initializing git repository"
         )
-        await result.communicate()
-
-        if result.returncode != 0:
-            raise Exception("Failed to initialize git repository")
 
         # Configure git user
-        await asyncio.create_subprocess_exec(
-            "git", "config", "user.name", "dumper",
+        await run_git_command(
+            "config", "user.name", "dumper",
             cwd=self.work_dir,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
+            description="Configuring git user name"
         )
 
-        await asyncio.create_subprocess_exec(
-            "git", "config", "user.email", f"dumper@{self.gitlab_server}",
+        await run_git_command(
+            "config", "user.email", f"dumper@{self.gitlab_server}",
             cwd=self.work_dir,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
+            description="Configuring git user email"
         )
 
         # Add all files
         console.print("[blue]Adding files to git...[/blue]")
-        result = await asyncio.create_subprocess_exec(
-            "git", "add", "--ignore-errors", "-A",
+        await run_git_command(
+            "add", "--ignore-errors", "-A",
             cwd=self.work_dir,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL
+            description="Adding files to git"
         )
-        await result.communicate()
 
         # Commit files
         console.print("[blue]Committing files...[/blue]")
-        result = await asyncio.create_subprocess_exec(
-            "git", "commit", "--quiet", "--signoff", "--message", description,
+        await run_git_command(
+            "commit", "--quiet", "--signoff", "--message", description,
             cwd=self.work_dir,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
+            description="Committing files"
         )
-        stdout, stderr = await result.communicate()
-
-        if result.returncode != 0:
-            raise Exception(f"Failed to commit files: {stderr.decode()}")
 
         console.print("[green]Git repository setup completed[/green]")
 
@@ -220,16 +205,12 @@ class GitLabManager:
         repo_url = f"{self.push_host}:{self.org}/{repo_subgroup}/{repo_name}.git"
         branch_ref = f"refs/heads/{branch}"
 
-        result = await asyncio.create_subprocess_exec(
-            "git", "push", repo_url, f"HEAD:{branch_ref}",
+        await run_git_command(
+            "push", repo_url, f"HEAD:{branch_ref}",
             cwd=self.work_dir,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
+            timeout=120.0,
+            description="Pushing to GitLab"
         )
-        stdout, stderr = await result.communicate()
-
-        if result.returncode != 0:
-            raise Exception(f"Failed to push to GitLab: {stderr.decode()}")
 
         # Set default branch
         await self._set_default_branch(project_id, branch, dumper_token)
@@ -271,22 +252,10 @@ class GitLabManager:
 
         console.print("[blue]Sending channel notification...[/blue]")
 
-        # Build notification message
-        brand = escape_markdown(device_props.get("brand", "Unknown"))
-        codename = escape_markdown(device_props.get("codename", "Unknown"))
-        release = escape_markdown(device_props.get("release", "Unknown"))
-        fingerprint = escape_markdown(device_props.get("fingerprint", "Unknown"))
-        platform = escape_markdown(device_props.get("platform", "Unknown"))
-
-        # Format firmware link
-        firmware_link = f"[[firmware]({download_url})]" if download_url else ""
-
-        message = f"""*Brand*: `{brand}`
-*Device*: `{codename}`
-*Version*: `{release}`
-*Fingerprint*: `{fingerprint}`
-*Platform*: `{platform}`
-[[repo]({repo_url})] {firmware_link}"""
+        # Build notification message using utility function
+        message = format_channel_notification_message(
+            device_props, repo_url, download_url
+        )
 
         # Send to channel
         async with httpx.AsyncClient(verify=False) as client:

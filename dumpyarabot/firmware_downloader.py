@@ -1,6 +1,5 @@
-import asyncio
 import os
-import subprocess
+import shutil
 import tempfile
 from pathlib import Path
 from typing import Optional, Tuple
@@ -10,6 +9,8 @@ import httpx
 from rich.console import Console
 
 from dumpyarabot.schemas import DumpJob
+from dumpyarabot.process_utils import run_download_command
+from dumpyarabot.file_utils import get_latest_file_in_directory, safe_remove_file, get_file_size_formatted
 
 console = Console()
 
@@ -29,7 +30,6 @@ class FirmwareDownloader:
         if os.path.isfile(url):
             console.print(f"[green]Found local file: {url}[/green]")
             # Copy to work directory
-            import shutil
             file_name = Path(url).name
             dest_path = self.work_dir / file_name
             shutil.copy2(url, dest_path)
@@ -43,7 +43,7 @@ class FirmwareDownloader:
         file_path = await self._download_by_type(optimized_url)
         file_name = Path(file_path).name
 
-        console.print(f"[green]Downloaded: {file_name} ({self._format_file_size(file_path)})[/green]")
+        console.print(f"[green]Downloaded: {file_name} ({get_file_size_formatted(file_path)})[/green]")
         return file_path, file_name
 
     async def _optimize_url(self, url: str) -> str:
@@ -111,136 +111,101 @@ class FirmwareDownloader:
 
     async def _download_google_drive(self, url: str) -> str:
         """Download from Google Drive using gdown."""
-        console.print("[blue]Downloading from Google Drive...[/blue]")
-
-        # Run gdown
-        result = await asyncio.create_subprocess_exec(
+        result = await run_download_command(
             "uvx", "gdown@5.2.0", "-q", url, "--fuzzy",
             cwd=self.work_dir,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
+            timeout=1800.0,  # 30 minutes for large files
+            description="Downloading from Google Drive"
         )
 
-        stdout, stderr = await result.communicate()
-
-        if result.returncode != 0:
-            raise Exception(f"Google Drive download failed: {stderr.decode()}")
+        if not result.success:
+            raise Exception(f"Google Drive download failed: {result.stderr}")
 
         # Find downloaded file
-        downloaded_files = list(self.work_dir.glob("*"))
-        if not downloaded_files:
+        latest_file = get_latest_file_in_directory(self.work_dir)
+        if not latest_file:
             raise Exception("No file found after Google Drive download")
 
-        return str(downloaded_files[-1])  # Return most recent file
+        return str(latest_file)
 
     async def _download_mediafire(self, url: str) -> str:
         """Download from MediaFire using mediafire-dl."""
-        console.print("[blue]Downloading from MediaFire...[/blue]")
-
-        result = await asyncio.create_subprocess_exec(
+        result = await run_download_command(
             "uvx", "--from", "git+https://github.com/Juvenal-Yescas/mediafire-dl@master",
             "mediafire-dl", url,
             cwd=self.work_dir,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
+            timeout=1800.0,  # 30 minutes for large files
+            description="Downloading from MediaFire"
         )
 
-        stdout, stderr = await result.communicate()
-
-        if result.returncode != 0:
-            raise Exception(f"MediaFire download failed: {stderr.decode()}")
+        if not result.success:
+            raise Exception(f"MediaFire download failed: {result.stderr}")
 
         # Find downloaded file
-        downloaded_files = list(self.work_dir.glob("*"))
-        if not downloaded_files:
+        latest_file = get_latest_file_in_directory(self.work_dir)
+        if not latest_file:
             raise Exception("No file found after MediaFire download")
 
-        return str(downloaded_files[-1])
+        return str(latest_file)
 
     async def _download_mega(self, url: str) -> str:
         """Download from MEGA using megatools."""
-        console.print("[blue]Downloading from MEGA...[/blue]")
-
-        result = await asyncio.create_subprocess_exec(
+        result = await run_download_command(
             "megatools", "dl", url,
             cwd=self.work_dir,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
+            timeout=1800.0,  # 30 minutes for large files
+            description="Downloading from MEGA"
         )
 
-        stdout, stderr = await result.communicate()
-
-        if result.returncode != 0:
-            raise Exception(f"MEGA download failed: {stderr.decode()}")
+        if not result.success:
+            raise Exception(f"MEGA download failed: {result.stderr}")
 
         # Find downloaded file
-        downloaded_files = list(self.work_dir.glob("*"))
-        if not downloaded_files:
+        latest_file = get_latest_file_in_directory(self.work_dir)
+        if not latest_file:
             raise Exception("No file found after MEGA download")
 
-        return str(downloaded_files[-1])
+        return str(latest_file)
 
     async def _download_default(self, url: str) -> str:
         """Download using aria2c with wget fallback."""
-        console.print("[blue]Downloading with aria2c...[/blue]")
-
         # Try aria2c first
-        result = await asyncio.create_subprocess_exec(
+        result = await run_download_command(
             "aria2c", "-q", "-s16", "-x16", "--check-certificate=false", url,
             cwd=self.work_dir,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
+            timeout=1800.0,  # 30 minutes for large files
+            description="Downloading with aria2c"
         )
 
-        stdout, stderr = await result.communicate()
-
-        if result.returncode == 0:
+        if result.success:
             # Success with aria2c
-            downloaded_files = list(self.work_dir.glob("*"))
-            if downloaded_files:
-                return str(downloaded_files[-1])
+            latest_file = get_latest_file_in_directory(self.work_dir)
+            if latest_file:
+                return str(latest_file)
 
         console.print("[yellow]aria2c failed, trying wget...[/yellow]")
 
         # Clean up any partial downloads
         for file in self.work_dir.glob("*"):
             if file.is_file():
-                file.unlink()
+                safe_remove_file(file)
 
         # Try wget fallback
-        result = await asyncio.create_subprocess_exec(
+        result = await run_download_command(
             "wget", "-q", "--no-check-certificate", url,
             cwd=self.work_dir,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
+            timeout=1800.0,  # 30 minutes for large files
+            description="Downloading with wget fallback"
         )
 
-        stdout, stderr = await result.communicate()
-
-        if result.returncode != 0:
-            raise Exception(f"Both aria2c and wget failed. Last error: {stderr.decode()}")
+        if not result.success:
+            raise Exception(f"Both aria2c and wget failed. Last error: {result.stderr}")
 
         # Find downloaded file
-        downloaded_files = list(self.work_dir.glob("*"))
-        if not downloaded_files:
+        latest_file = get_latest_file_in_directory(self.work_dir)
+        if not latest_file:
             raise Exception("No file found after wget download")
 
-        return str(downloaded_files[-1])
+        return str(latest_file)
 
-    def _format_file_size(self, file_path: str) -> str:
-        """Format file size in human readable format."""
-        size = os.path.getsize(file_path)
-        for unit in ['B', 'KB', 'MB', 'GB']:
-            if size < 1024.0:
-                return f"{size:.1f} {unit}"
-            size /= 1024.0
-        return f"{size:.1f} TB"
 
-    async def validate_url(self, url: str) -> bool:
-        """Validate if URL is accessible."""
-        try:
-            async with httpx.AsyncClient(verify=False) as client:
-                response = await client.head(url, timeout=10.0, follow_redirects=True)
-                return response.status_code < 400
-        except Exception:
-            return False

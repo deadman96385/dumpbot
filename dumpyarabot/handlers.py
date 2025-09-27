@@ -7,11 +7,13 @@ from rich.console import Console
 from telegram import Chat, Message, Update
 from telegram.ext import ContextTypes
 
-from dumpyarabot import schemas, utils
+from dumpyarabot import schemas, utils, url_utils
 from dumpyarabot.utils import escape_markdown
 from dumpyarabot.config import settings
+from dumpyarabot.auth import check_admin_permissions
 from dumpyarabot.gemini_analyzer import analyzer, image_generator
 from dumpyarabot.message_queue import message_queue
+from dumpyarabot.message_formatting import generate_progress_bar
 
 console = Console()
 
@@ -75,8 +77,13 @@ async def dump(
 
     # Try to validate args and queue dump job
     try:
+        # Validate URL using new utility
+        is_valid, normalized_url, error_msg = await url_utils.validate_and_normalize_url(url)
+        if not is_valid:
+            raise ValidationError(error_msg)
+
         dump_args = schemas.DumpArguments(
-            url=url,
+            url=normalized_url,
             use_alt_dumper=use_alt_dumper,
             use_privdump=use_privdump,
             initial_message_id=None if use_privdump else message.message_id,
@@ -131,7 +138,7 @@ async def dump(
         if options_list:
             initial_text += f"⚙️ *Options:* {', '.join(options_list)}\n"
 
-        initial_text += f"\n📊 *Progress:* [----------] 0% (Step 0/10)\n"
+        initial_text += f"\n{generate_progress_bar(None)}\n"
         initial_text += "🔄 Queued for processing...\n\n"
         initial_text += "⏱️ *Elapsed:* 0s\n"
         initial_text += "👷 *Worker:* Waiting for assignment...\n"
@@ -195,10 +202,10 @@ async def cancel_dump(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
 
     # Check if the user is an admin
-    admins = await chat.get_administrators()
-    if user not in [admin.user for admin in admins]:
+    has_permission, error_message = await check_admin_permissions(update, context, require_admin=True)
+    if not has_permission:
         console.print(
-            f"[yellow]Non-admin user {user.id} tried to use cancel command[/yellow]"
+            f"[yellow]Non-admin user {user.id} tried to use cancel command: {error_message}[/yellow]"
         )
         await message_queue.send_error(
             chat_id=chat.id,
@@ -430,13 +437,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
 
     # Check if user is admin to show admin commands
-    is_admin = False
-    try:
-        chat_member = await context.bot.get_chat_member(chat_id=chat.id, user_id=user.id)
-        is_admin = chat_member.status in ["administrator", "creator"]
-    except Exception:
-        # If we can't check admin status, default to not showing admin commands
-        is_admin = False
+    has_permission, _ = await check_admin_permissions(update, context, require_admin=True)
+    is_admin = has_permission
 
     help_text = "🤖 *DumpyaraBot Command Help*\n\n"
 
@@ -496,21 +498,13 @@ async def restart(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     # Check if the user is a Telegram admin in this chat
-    try:
-        chat_member = await context.bot.get_chat_member(chat_id=chat.id, user_id=user.id)
-        if chat_member.status not in ["administrator", "creator"]:
-            await message_queue.send_error(
-                chat_id=chat.id,
-                text="❌ You don't have permission to restart the bot. Only chat administrators can use this command.",
-                context={"command": "restart", "user_id": user.id, "error": "permission_denied"}
-            )
-            return
-    except Exception as e:
-        console.print(f"[red]Error checking admin status: {e}[/red]")
+    has_permission, error_message = await check_admin_permissions(update, context, require_admin=True)
+    if not has_permission:
+        console.print(f"[red]Error checking admin status: {error_message}[/red]")
         await message_queue.send_error(
             chat_id=chat.id,
-            text="❌ Error checking admin permissions.",
-            context={"command": "restart", "user_id": user.id, "error": "admin_check_failed"}
+            text="❌ You don't have permission to restart the bot. Only chat administrators can use this command.",
+            context={"command": "restart", "user_id": user.id, "error": "permission_denied"}
         )
         return
 
@@ -591,17 +585,11 @@ async def handle_restart_callback(update: Update, context: ContextTypes.DEFAULT_
             return
 
         # Verify user is still a chat admin
-        try:
-            chat_member = await query.get_bot().get_chat_member(chat_id=query.message.chat.id, user_id=user.id)
-            if chat_member.status not in ["administrator", "creator"]:
-                await query.edit_message_text(
-                    "❌ Permission denied. You are no longer a chat administrator."
-                )
-                return
-        except Exception as e:
-            console.print(f"[red]Error checking admin status: {e}[/red]")
+        has_permission, error_message = await check_admin_permissions(update, context, require_admin=True)
+        if not has_permission:
+            console.print(f"[red]Error checking admin status: {error_message}[/red]")
             await query.edit_message_text(
-                "❌ Error checking admin permissions."
+                "❌ Permission denied. You are no longer a chat administrator."
             )
             return
 
@@ -664,21 +652,13 @@ async def analyze(
         return
 
     # Check if user is admin
-    try:
-        chat_member = await context.bot.get_chat_member(chat_id=chat.id, user_id=message.from_user.id)
-        if chat_member.status not in ["administrator", "creator"]:
-            await message_queue.send_error(
-                chat_id=chat.id,
-                text="❌ This command is restricted to chat administrators.",
-                context={"command": "analyze", "user_id": message.from_user.id, "error": "permission_denied"}
-            )
-            return
-    except Exception as e:
-        console.print(f"[red]Error checking admin status: {e}[/red]")
+    has_permission, error_message = await check_admin_permissions(update, context, require_admin=True)
+    if not has_permission:
+        console.print(f"[red]Error checking admin status: {error_message}[/red]")
         await message_queue.send_error(
             chat_id=chat.id,
-            text="❌ Error checking admin permissions.",
-            context={"command": "analyze", "user_id": message.from_user.id, "error": "admin_check_failed"}
+            text="❌ This command is restricted to chat administrators.",
+            context={"command": "analyze", "user_id": message.from_user.id, "error": "permission_denied"}
         )
         return
 

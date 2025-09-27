@@ -4,9 +4,10 @@ This module contains ARQ job functions that replace the custom worker system
 while preserving all Telegram messaging features and cross-chat functionality.
 """
 
+import asyncio
 import tempfile
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Any, Optional
 
@@ -20,116 +21,45 @@ from dumpyarabot.gitlab_manager import GitLabManager
 from dumpyarabot.message_queue import message_queue
 from dumpyarabot.property_extractor import PropertyExtractor
 from dumpyarabot.schemas import DumpJob, JobStatus
+from dumpyarabot.message_formatting import format_comprehensive_progress_message
 
 console = Console()
 
 
-def _format_progress_message(
-    job_data: Dict[str, Any],
-    current_step: str,
-    progress: Optional[Dict[str, Any]] = None
-) -> str:
-    """Format a comprehensive progress message - preserving exact original formatting."""
+class PeriodicTimerUpdate:
+    """Context manager for periodic elapsed time updates during long operations."""
 
-    # Generate progress bar
-    progress_bar = _generate_progress_bar(progress)
+    def __init__(self, job_data: Dict[str, Any], message: str, progress: Dict[str, Any], interval: int = 30):
+        self.job_data = job_data
+        self.message = message
+        self.progress = progress
+        self.interval = interval
+        self.task = None
+        self.running = False
 
-    # Calculate elapsed time
-    elapsed = _calculate_elapsed_time(job_data)
+    async def __aenter__(self):
+        self.running = True
+        self.task = asyncio.create_task(self._periodic_update())
+        return self
 
-    # Build message
-    if progress and progress.get("percentage", 0) >= 100:
-        status_emoji = "✅"
-        status_text = "Firmware Dump Completed"
-    elif progress and progress.get("current_step") == "Failed":
-        status_emoji = "❌"
-        status_text = "Firmware Dump Failed"
-    else:
-        status_emoji = "🚀"
-        status_text = "Firmware Dump in Progress"
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        self.running = False
+        if self.task and not self.task.done():
+            self.task.cancel()
+            try:
+                await self.task
+            except asyncio.CancelledError:
+                pass
 
-    url_display = _format_url_display(job_data["dump_args"]["url"])
-    job_id_display = job_data["job_id"]
-    worker_id_display = job_data.get("worker_id", "arq_worker")
-    current_step_display = current_step
-
-    message = f"{status_emoji} *{status_text}*\n\n"
-    message += f"📥 *URL:* `{url_display}`\n"
-    message += f"🆔 *Job ID:* `{job_id_display}`\n"
-
-    # Format options
-    options = []
-    if job_data["dump_args"].get("use_alt_dumper"):
-        options.append("Alt Dumper")
-    if job_data.get("add_blacklist"):
-        options.append("Blacklist")
-    if job_data["dump_args"].get("use_privdump"):
-        options.append("Private")
-
-    if options:
-        message += f"⚙️ *Options:* {', '.join(options)}\n"
-
-    message += f"\n{progress_bar}\n"
-    message += f"{current_step_display}\n\n"
-    message += f"⏱️ *Elapsed:* {elapsed}\n"
-    message += f"👷 *Worker:* `{worker_id_display}`\n"
-
-    if progress and progress.get("error_message"):
-        error_display = progress['error_message']
-        message += f"❌ *Error:* {error_display}\n"
-
-    return message
-
-
-def _generate_progress_bar(progress: Optional[Dict[str, Any]]) -> str:
-    """Generate ASCII progress bar - preserving exact original logic."""
-    if not progress:
-        return "📊 *Progress:* [----------] 0% (Step 0/10)"
-
-    percentage = progress.get("percentage", 0)
-    current_step = progress.get("current_step_number", 0)
-    total_steps = progress.get("total_steps", 10)
-
-    # Generate progress bar (10 blocks) using simple ASCII characters
-    filled_blocks = int(percentage / 10)
-    bar = "=" * filled_blocks + "-" * (10 - filled_blocks)
-
-    return f"📊 *Progress:* [{bar}] {percentage:.0f}% (Step {current_step}/{total_steps})"
-
-
-def _calculate_elapsed_time(job_data: Dict[str, Any]) -> str:
-    """Calculate elapsed time since job started - preserving exact original logic."""
-    started_at_str = job_data.get("started_at")
-    if not started_at_str:
-        return "0s"
-
-    # Parse the datetime string back to datetime object
-    try:
-        started_at = datetime.fromisoformat(started_at_str.replace('Z', '+00:00'))
-    except (ValueError, AttributeError):
-        return "0s"
-
-    elapsed = datetime.utcnow() - started_at.replace(tzinfo=None)
-    total_seconds = int(elapsed.total_seconds())
-
-    if total_seconds < 60:
-        return f"{total_seconds}s"
-    elif total_seconds < 3600:
-        minutes = total_seconds // 60
-        seconds = total_seconds % 60
-        return f"{minutes}m {seconds}s"
-    else:
-        hours = total_seconds // 3600
-        minutes = (total_seconds % 3600) // 60
-        return f"{hours}h {minutes}m"
-
-
-def _format_url_display(url: str) -> str:
-    """Format URL for display (truncate if too long) - preserving exact original logic."""
-    url_str = str(url)
-    if len(url_str) > 60:
-        return url_str[:57] + "..."
-    return url_str
+    async def _periodic_update(self):
+        """Send periodic updates with refreshed elapsed time."""
+        try:
+            while self.running:
+                await asyncio.sleep(self.interval)
+                if self.running:  # Check again after sleep
+                    await _send_status_update(self.job_data, self.message, self.progress)
+        except asyncio.CancelledError:
+            pass
 
 
 async def _send_status_update(
@@ -139,8 +69,8 @@ async def _send_status_update(
 ) -> None:
     """Send a status update message using the existing message queue - PRESERVING ALL TELEGRAM FEATURES."""
 
-    # Format the comprehensive progress message using original logic
-    formatted_message = _format_progress_message(job_data, message, progress)
+    # Format the comprehensive progress message using utility function (with ARQ fallback)
+    formatted_message = await format_comprehensive_progress_message(job_data, message, progress)
 
     # PRESERVE: Check for required message context (from original logic)
     initial_message_id = job_data.get("initial_message_id")
@@ -200,7 +130,7 @@ async def _send_failure_notification(job_data: Dict[str, Any], error_details: st
         # Format the failure message using the standard progress format
         progress = job_data.get("progress") or {}
         current_step = progress.get("current_step", "Unknown step")
-        formatted_message = _format_progress_message(
+        formatted_message = await format_comprehensive_progress_message(
             job_data,
             f"❌ Failed at: {current_step}",
             failure_progress
@@ -279,7 +209,7 @@ async def process_firmware_dump(ctx, job_data: Dict[str, Any]) -> Dict[str, Any]
 
     # Add ARQ job context to job_data for tracking
     job_data["arq_job_id"] = getattr(ctx, 'job_id', None)
-    job_data["started_at"] = datetime.utcnow().isoformat()
+    job_data["started_at"] = datetime.now(timezone.utc).isoformat()
 
     try:
         # Create temporary work directory
@@ -294,72 +224,157 @@ async def process_firmware_dump(ctx, job_data: Dict[str, Any]) -> Dict[str, Any]
                 prop_extractor = PropertyExtractor(str(work_dir))
                 gitlab_manager = GitLabManager(str(work_dir))
 
-                # Step 1: Validation and setup
+                # Step 1: Environment setup and URL validation (4%)
                 await _send_status_update(
                     job_data,
                     "🔍 Validating URL and setting up environment...",
-                    progress={"current_step": "Setup", "total_steps": 10, "current_step_number": 1, "percentage": 10.0}
+                    progress={"current_step": "Setup", "total_steps": 25, "current_step_number": 1, "percentage": 4.0}
+                )
+                # Step 2: GitLab access validation (8%)
+                await _send_status_update(
+                    job_data,
+                    "🔗 Validating GitLab access...",
+                    progress={"current_step": "Validation", "total_steps": 25, "current_step_number": 2, "percentage": 8.0}
                 )
                 await _validate_gitlab_access()
                 is_whitelisted = await gitlab_manager.check_whitelist(str(job_data["dump_args"]["url"]))
 
-                # Step 2: Download firmware
+                # Step 3: URL optimization and mirror selection (12%)
+                await _send_status_update(
+                    job_data,
+                    "🔍 Optimizing download URL and selecting mirrors...",
+                    progress={"current_step": "URL Optimization", "total_steps": 25, "current_step_number": 3, "percentage": 12.0}
+                )
+
+                # Step 4: Starting download (16%)
+                download_progress = {"current_step": "Download", "total_steps": 25, "current_step_number": 4, "percentage": 16.0}
                 await _send_status_update(
                     job_data,
                     "📥 Downloading firmware...",
-                    progress={"current_step": "Download", "total_steps": 10, "current_step_number": 2, "percentage": 20.0}
+                    progress=download_progress
                 )
 
                 # Create DumpJob object for components that need it
                 dump_job = DumpJob.model_validate(job_data)
-                firmware_path, firmware_name = await downloader.download_firmware(dump_job)
 
-                # Step 3: Extract partitions
+                # Use periodic timer for download operation
+                async with PeriodicTimerUpdate(job_data, "📥 Downloading firmware...", download_progress):
+                    firmware_path, firmware_name = await downloader.download_firmware(dump_job)
+
+                # Step 5: Download completed (20%)
+                await _send_status_update(
+                    job_data,
+                    "✅ Firmware download completed",
+                    progress={"current_step": "Download Complete", "total_steps": 25, "current_step_number": 5, "percentage": 20.0}
+                )
+
+                # Step 6: Starting firmware extraction (24%)
+                extract_progress = {"current_step": "Extract", "total_steps": 25, "current_step_number": 6, "percentage": 24.0}
                 await _send_status_update(
                     job_data,
                     "📦 Extracting firmware partitions...",
-                    progress={"current_step": "Extract", "total_steps": 10, "current_step_number": 3, "percentage": 30.0}
+                    progress=extract_progress
                 )
-                await extractor.extract_firmware(dump_job, firmware_path)
 
-                # Step 4: Process boot images
+                # Use periodic timer for extraction operation
+                async with PeriodicTimerUpdate(job_data, "📦 Extracting firmware partitions...", extract_progress):
+                    await extractor.extract_firmware(dump_job, firmware_path)
+
+                # Step 7: Python/Alternative dumper completed (28%)
+                await _send_status_update(
+                    job_data,
+                    "✅ Firmware extraction completed",
+                    progress={"current_step": "Extract Complete", "total_steps": 25, "current_step_number": 7, "percentage": 28.0}
+                )
+
+                # Step 8: Processing individual partitions (32%)
+                await _send_status_update(
+                    job_data,
+                    "📁 Processing individual partitions...",
+                    progress={"current_step": "Partitions", "total_steps": 25, "current_step_number": 8, "percentage": 32.0}
+                )
+
+                # Step 9: Extracting boot images (36%)
                 await _send_status_update(
                     job_data,
                     "🥾 Processing boot images...",
-                    progress={"current_step": "Boot Images", "total_steps": 10, "current_step_number": 4, "percentage": 40.0}
+                    progress={"current_step": "Boot Images", "total_steps": 25, "current_step_number": 9, "percentage": 36.0}
                 )
                 await extractor.process_boot_images()
 
-                # Step 5: Extract device properties
+                # Step 10: Processing ikconfig and kallsyms (40%)
+                await _send_status_update(
+                    job_data,
+                    "⚙️ Processing kernel configuration and symbols...",
+                    progress={"current_step": "Kernel Analysis", "total_steps": 25, "current_step_number": 10, "percentage": 40.0}
+                )
+
+                # Step 11: Extracting device trees (44%)
+                await _send_status_update(
+                    job_data,
+                    "🌳 Extracting device trees...",
+                    progress={"current_step": "Device Trees", "total_steps": 25, "current_step_number": 11, "percentage": 44.0}
+                )
+
+                # Step 12: Partition extraction completed (48%)
+                await _send_status_update(
+                    job_data,
+                    "✅ Partition extraction completed",
+                    progress={"current_step": "Extract Done", "total_steps": 25, "current_step_number": 12, "percentage": 48.0}
+                )
+
+                # Step 13: Extracting device properties (52%)
                 await _send_status_update(
                     job_data,
                     "📋 Extracting device properties...",
-                    progress={"current_step": "Properties", "total_steps": 10, "current_step_number": 5, "percentage": 50.0}
+                    progress={"current_step": "Properties", "total_steps": 25, "current_step_number": 13, "percentage": 52.0}
                 )
                 device_props = await prop_extractor.extract_properties()
 
-                # Step 6: Generate additional files
+                # Step 14: Generating file manifest (56%)
                 await _send_status_update(
                     job_data,
                     "📄 Generating board info and file listings...",
-                    progress={"current_step": "File Generation", "total_steps": 10, "current_step_number": 6, "percentage": 60.0}
+                    progress={"current_step": "File Generation", "total_steps": 25, "current_step_number": 14, "percentage": 56.0}
                 )
                 await prop_extractor.generate_board_info()
                 await prop_extractor.generate_all_files_list()
 
-                # Step 7: Generate device tree
+                # Step 15: Creating device trees (60%)
                 await _send_status_update(
                     job_data,
                     "🌳 Generating device tree...",
-                    progress={"current_step": "Device Tree", "total_steps": 10, "current_step_number": 7, "percentage": 70.0}
+                    progress={"current_step": "Device Tree", "total_steps": 25, "current_step_number": 15, "percentage": 60.0}
                 )
                 await prop_extractor.generate_device_tree()
 
-                # Step 8: Create GitLab repository
+                # Step 16: Analysis completed (64%)
+                await _send_status_update(
+                    job_data,
+                    "✅ Device analysis completed",
+                    progress={"current_step": "Analysis Done", "total_steps": 25, "current_step_number": 16, "percentage": 64.0}
+                )
+
+                # Step 17: Checking/creating GitLab subgroup (68%)
+                await _send_status_update(
+                    job_data,
+                    "🗒️ Checking GitLab subgroup...",
+                    progress={"current_step": "GitLab Subgroup", "total_steps": 25, "current_step_number": 17, "percentage": 68.0}
+                )
+
+                # Step 18: Checking/creating GitLab project (72%)
+                await _send_status_update(
+                    job_data,
+                    "📁 Checking GitLab project...",
+                    progress={"current_step": "GitLab Project", "total_steps": 25, "current_step_number": 18, "percentage": 72.0}
+                )
+
+                # Step 19: Setting up git repository (76%)
+                gitlab_progress = {"current_step": "GitLab Setup", "total_steps": 25, "current_step_number": 19, "percentage": 76.0}
                 await _send_status_update(
                     job_data,
                     "🗂️ Creating GitLab repository...",
-                    progress={"current_step": "GitLab Setup", "total_steps": 10, "current_step_number": 8, "percentage": 80.0}
+                    progress=gitlab_progress
                 )
 
                 # Get DUMPER_TOKEN from environment or settings
@@ -367,13 +382,43 @@ async def process_firmware_dump(ctx, job_data: Dict[str, Any]) -> Dict[str, Any]
                 if not dumper_token:
                     raise Exception("DUMPER_TOKEN not configured")
 
-                repo_url, repo_path = await gitlab_manager.create_and_push_repository(device_props, dumper_token)
+                # Use periodic timer for GitLab operation (longest operation)
+                async with PeriodicTimerUpdate(job_data, "🗂️ Creating GitLab repository...", gitlab_progress):
+                    repo_url, repo_path = await gitlab_manager.create_and_push_repository(device_props, dumper_token)
 
-                # Step 9: Send channel notification
+                # Step 20: Adding and committing files (80%)
+                await _send_status_update(
+                    job_data,
+                    "📝 Adding and committing files...",
+                    progress={"current_step": "Git Commit", "total_steps": 25, "current_step_number": 20, "percentage": 80.0}
+                )
+
+                # Step 21: Pushing to GitLab (84%)
+                await _send_status_update(
+                    job_data,
+                    "🚀 Pushing to GitLab...",
+                    progress={"current_step": "Git Push", "total_steps": 25, "current_step_number": 21, "percentage": 84.0}
+                )
+
+                # Step 22: Setting default branch (88%)
+                await _send_status_update(
+                    job_data,
+                    "🌱 Setting default branch...",
+                    progress={"current_step": "Branch Setup", "total_steps": 25, "current_step_number": 22, "percentage": 88.0}
+                )
+
+                # Step 23: Preparing channel notification (92%)
+                await _send_status_update(
+                    job_data,
+                    "📢 Preparing channel notification...",
+                    progress={"current_step": "Notification Prep", "total_steps": 25, "current_step_number": 23, "percentage": 92.0}
+                )
+
+                # Step 24: Sending notification (96%)
                 await _send_status_update(
                     job_data,
                     "📢 Sending channel notification...",
-                    progress={"current_step": "Notification", "total_steps": 10, "current_step_number": 9, "percentage": 90.0}
+                    progress={"current_step": "Notification", "total_steps": 25, "current_step_number": 24, "percentage": 96.0}
                 )
 
                 # Get API_KEY from environment or settings for channel notification
@@ -388,11 +433,11 @@ async def process_firmware_dump(ctx, job_data: Dict[str, Any]) -> Dict[str, Any]
                         api_key
                     )
 
-                # Step 10: Complete
+                # Step 25: Process completed (100%)
                 await _send_status_update(
                     job_data,
                     f"✅ *Dump completed successfully!*\n\n📁 *Repository:* {repo_url}\n📱 *Device:* {device_props.get('brand', 'Unknown')} {device_props.get('codename', 'Unknown')}",
-                    progress={"current_step": "Completed", "total_steps": 10, "current_step_number": 10, "percentage": 100.0}
+                    progress={"current_step": "Completed", "total_steps": 25, "current_step_number": 25, "percentage": 100.0}
                 )
 
                 # Return result data

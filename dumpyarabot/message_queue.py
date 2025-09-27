@@ -8,7 +8,7 @@ import redis.asyncio as redis
 from pydantic import BaseModel
 from rich.console import Console
 from telegram import Bot
-from telegram.error import RetryAfter, TelegramError
+from telegram.error import RetryAfter, TelegramError, NetworkError
 import telegram
 
 from dumpyarabot.config import settings
@@ -440,6 +440,14 @@ class MessageQueue:
             message.scheduled_for = datetime.utcnow() + timedelta(seconds=e.retry_after)
             await self._requeue_message(message)
             return True  # Don't increment retry count for rate limits
+
+        except NetworkError as e:
+            console.print(f"[yellow]Network error processing message: {e}[/yellow]")
+            # Simple retry with exponential backoff for network issues
+            retry_delay = min(30 * (2 ** message.retry_count), 300)  # 30s, 60s, 120s, 240s, 300s max
+            message.scheduled_for = datetime.utcnow() + timedelta(seconds=retry_delay)
+            await self._requeue_message(message)
+            return True  # Don't increment retry count for network issues
 
         except TelegramError as e:
             console.print(f"[red]Telegram API error processing message: {e}[/red]")

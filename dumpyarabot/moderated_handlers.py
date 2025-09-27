@@ -6,7 +6,7 @@ from rich.console import Console
 from telegram import Chat, Message, ReplyParameters, Update
 from telegram.ext import ContextTypes
 
-from dumpyarabot import schemas, utils
+from dumpyarabot import schemas, utils, url_utils
 from dumpyarabot.utils import escape_markdown
 from dumpyarabot.config import (CALLBACK_ACCEPT, CALLBACK_CANCEL_REQUEST,
                                 CALLBACK_REJECT, CALLBACK_SUBMIT_ACCEPTANCE,
@@ -76,8 +76,10 @@ async def handle_request_message(
     console.print(f"[blue]Processing request for URL: {url_str}[/blue]")
 
     try:
-        # 3. Validate URL using Pydantic
-        validated_url = schemas.AnyHttpUrl(url_str)
+        # 3. Validate URL using new utility
+        is_valid, validated_url, error_msg = await url_utils.validate_and_normalize_url(url_str)
+        if not is_valid:
+            raise ValidationError(error_msg)
 
         # 4. Generate request_id
         request_id = utils.generate_request_id()

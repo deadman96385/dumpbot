@@ -1,9 +1,11 @@
 import re
-import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 
 from rich.console import Console
+
+from dumpyarabot.process_utils import run_command, run_analysis_command
+from dumpyarabot.file_utils import expand_glob_paths, create_file_manifest
 
 console = Console()
 
@@ -359,18 +361,21 @@ class PropertyExtractor:
             for path in paths:
                 try:
                     # Use ripgrep to search for property
-                    result = await asyncio.create_subprocess_exec(
+                    expanded_paths = expand_glob_paths(self.work_dir, path)
+                    if not expanded_paths:
+                        continue
+
+                    result = await run_command(
                         "rg", "-m1", "-INoP", "--no-messages",
                         f"(?<=^{pattern}=).*",
-                        *self._expand_glob_paths(path),
+                        *[str(p) for p in expanded_paths],
                         cwd=self.work_dir,
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.PIPE
+                        timeout=30.0,
+                        quiet=True
                     )
-                    stdout, _ = await result.communicate()
 
-                    if result.returncode == 0 and stdout:
-                        value = stdout.decode().strip().split('\n')[0]
+                    if result.success and result.stdout:
+                        value = result.stdout.strip().split('\n')[0]
                         if value:
                             return value
                 except Exception:
@@ -378,14 +383,6 @@ class PropertyExtractor:
 
         return None
 
-    def _expand_glob_paths(self, path: str) -> List[str]:
-        """Expand glob patterns in paths."""
-        if "*" in path:
-            expanded = list(self.work_dir.glob(path))
-            return [str(p) for p in expanded if p.is_file()]
-        else:
-            full_path = self.work_dir / path
-            return [str(full_path)] if full_path.is_file() else []
 
     def _generate_branch_name(self, props: Dict[str, Any]) -> str:
         """Generate branch name from description and special keys."""
@@ -472,17 +469,15 @@ class PropertyExtractor:
             for modem_dir in modem_dirs:
                 if modem_dir.is_dir():
                     try:
-                        result = await asyncio.create_subprocess_exec(
+                        result = await run_analysis_command(
                             "find", str(modem_dir), "-type", "f", "-exec", "strings", "{}", ";",
-                            stdout=asyncio.subprocess.PIPE,
-                            stderr=asyncio.subprocess.PIPE
+                            timeout=120.0,
+                            description="Extracting modem version information"
                         )
-                        stdout, _ = await result.communicate()
 
-                        if result.returncode == 0:
+                        if result.success:
                             # Search for MPSS version
-                            output = stdout.decode()
-                            for line in output.split('\n'):
+                            for line in result.stdout.split('\n'):
                                 if "QC_IMAGE_VERSION_STRING=MPSS." in line:
                                     version = line.replace("QC_IMAGE_VERSION_STRING=MPSS.", "")[3:]
                                     if version:
@@ -495,16 +490,14 @@ class PropertyExtractor:
             for tz_dir in tz_dirs:
                 if tz_dir.is_dir():
                     try:
-                        result = await asyncio.create_subprocess_exec(
+                        result = await run_analysis_command(
                             "find", str(tz_dir), "-type", "f", "-exec", "strings", "{}", ";",
-                            stdout=asyncio.subprocess.PIPE,
-                            stderr=asyncio.subprocess.PIPE
+                            timeout=120.0,
+                            description="Extracting trustzone version information"
                         )
-                        stdout, _ = await result.communicate()
 
-                        if result.returncode == 0:
-                            output = stdout.decode()
-                            for line in output.split('\n'):
+                        if result.success:
+                            for line in result.stdout.split('\n'):
                                 if "QC_IMAGE_VERSION_STRING" in line:
                                     version = line.replace("QC_IMAGE_VERSION_STRING", "require version-trustzone")
                                     if version:
@@ -527,36 +520,17 @@ class PropertyExtractor:
 
     async def generate_all_files_list(self) -> None:
         """Generate all_files.txt listing."""
-        console.print("[blue]Generating all_files.txt...[/blue]")
-
         all_files_path = self.work_dir / "all_files.txt"
+        exclude_patterns = ["all_files.txt", "aosp-device-tree/"]
 
-        try:
-            result = await asyncio.create_subprocess_exec(
-                "find", ".", "-type", "f",
-                "!", "-name", "all_files.txt",
-                "!", "-path", "*/aosp-device-tree/*",
-                "-printf", "%P\\n",
-                cwd=self.work_dir,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            stdout, _ = await result.communicate()
+        success = create_file_manifest(
+            self.work_dir,
+            all_files_path,
+            exclude_patterns
+        )
 
-            if result.returncode == 0:
-                files = sorted(stdout.decode().strip().split('\n'))
-                # Filter out .git files
-                files = [f for f in files if not f.startswith('.git/')]
-
-                with open(all_files_path, 'w') as f:
-                    f.write('\n'.join(files) + '\n')
-
-                console.print(f"[green]Generated all_files.txt with {len(files)} files[/green]")
-            else:
-                console.print("[yellow]Failed to generate all_files.txt[/yellow]")
-
-        except Exception as e:
-            console.print(f"[red]Error generating all_files.txt: {e}[/red]")
+        if not success:
+            console.print("[yellow]Failed to generate all_files.txt[/yellow]")
 
     async def generate_device_tree(self) -> bool:
         """Generate AOSP device tree using aospdtgen."""
@@ -566,25 +540,20 @@ class PropertyExtractor:
         aosp_dt_dir.mkdir(exist_ok=True)
 
         try:
-            result = await asyncio.create_subprocess_exec(
+            result = await run_command(
                 "uvx", "aospdtgen@1.1.1", ".", "--output", "./aosp-device-tree",
                 cwd=self.work_dir,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                timeout=180.0,
+                description="Generating device tree"
             )
-            stdout, stderr = await result.communicate()
 
-            if result.returncode == 0:
+            if result.success:
                 console.print("[green]Device tree successfully generated[/green]")
                 return True
             else:
-                console.print(f"[yellow]Failed to generate device tree: {stderr.decode()}[/yellow]")
+                console.print(f"[yellow]Failed to generate device tree: {result.stderr}[/yellow]")
                 return False
 
         except Exception as e:
             console.print(f"[red]Error generating device tree: {e}[/red]")
             return False
-
-
-# Import asyncio for async functions
-import asyncio

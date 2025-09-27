@@ -1,4 +1,5 @@
 import secrets
+import asyncio
 from datetime import datetime
 from typing import List, Tuple, Optional
 
@@ -9,6 +10,48 @@ from dumpyarabot import schemas
 from dumpyarabot.config import settings
 
 console = Console()
+
+
+async def retry_http_request(
+    method: str,
+    url: str,
+    max_retries: int = 3,
+    base_delay: float = 2.0,
+    **kwargs
+) -> httpx.Response:
+    """
+    Simple retry wrapper for HTTP requests with exponential backoff.
+
+    Args:
+        method: HTTP method (GET, POST, etc.)
+        url: Request URL
+        max_retries: Maximum number of retry attempts
+        base_delay: Base delay between retries in seconds
+        **kwargs: Additional arguments passed to httpx request
+    """
+    last_exception = None
+
+    for attempt in range(max_retries + 1):  # +1 for initial attempt
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.request(method, url, **kwargs)
+                response.raise_for_status()
+                return response
+
+        except (httpx.ConnectError, httpx.TimeoutException, httpx.HTTPStatusError) as e:
+            last_exception = e
+
+            if attempt == max_retries:  # Last attempt
+                console.print(f"[red]HTTP request failed after {max_retries + 1} attempts: {e}[/red]")
+                break
+
+            # Calculate delay with exponential backoff
+            delay = base_delay * (2 ** attempt)
+            console.print(f"[yellow]Attempt {attempt + 1} failed, retrying in {delay:.1f}s: {e}[/yellow]")
+            await asyncio.sleep(delay)
+
+    # If all attempts failed, raise the last exception
+    raise last_exception
 
 
 def escape_markdown(text: str) -> str:
@@ -49,27 +92,26 @@ def generate_request_id() -> str:
 async def get_jenkins_builds(job_name: str) -> List[schemas.JenkinsBuild]:
     """Fetch all builds from Jenkins for a specific job."""
     console.print(f"[blue]Fetching builds for job: {job_name}[/blue]")
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.get(
-                f"{settings.JENKINS_URL}/job/{job_name}/api/json",
-                params={
-                    "tree": "allBuilds[number,result,actions[parameters[name,value]]]"
-                },
-                auth=(settings.JENKINS_USER_NAME, settings.JENKINS_USER_TOKEN),
-                timeout=30.0,
-            )
-            response.raise_for_status()
-            builds = [
-                schemas.JenkinsBuild(**build) for build in response.json()["allBuilds"]
-            ]
-            console.print(
-                f"[green]Successfully fetched {len(builds)} builds for {job_name}[/green]"
-            )
-            return builds
-        except Exception as e:
-            console.print(f"[red]Failed to fetch builds for {job_name}: {e}[/red]")
-            raise
+
+    try:
+        response = await retry_http_request(
+            "GET",
+            f"{settings.JENKINS_URL}/job/{job_name}/api/json",
+            params={
+                "tree": "allBuilds[number,result,actions[parameters[name,value]]]"
+            },
+            auth=(settings.JENKINS_USER_NAME, settings.JENKINS_USER_TOKEN),
+        )
+        builds = [
+            schemas.JenkinsBuild(**build) for build in response.json()["allBuilds"]
+        ]
+        console.print(
+            f"[green]Successfully fetched {len(builds)} builds for {job_name}[/green]"
+        )
+        return builds
+    except Exception as e:
+        console.print(f"[red]Failed to fetch builds for {job_name}: {e}[/red]")
+        raise
 
 
 def _is_matching_build(
@@ -171,89 +213,84 @@ async def call_jenkins(args: schemas.DumpArguments, add_blacklist: bool = False)
     console.print(f"[dim]{curl_command}[/dim]")
     console.print("[yellow]=== END JENKINS DEBUG ===[/yellow]")
 
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.post(
-                jenkins_url,
-                params=jenkins_params,
-                auth=(settings.JENKINS_USER_NAME, settings.JENKINS_USER_TOKEN),
-            )
-            response.raise_for_status()
-            console.print(f"[green]Successfully triggered {job_name} build[/green]")
-            console.print(f"[blue]Response headers: {dict(response.headers)}[/blue]")
+    try:
+        response = await retry_http_request(
+            "POST",
+            jenkins_url,
+            params=jenkins_params,
+            auth=(settings.JENKINS_USER_NAME, settings.JENKINS_USER_TOKEN),
+        )
+        console.print(f"[green]Successfully triggered {job_name} build[/green]")
+        console.print(f"[blue]Response headers: {dict(response.headers)}[/blue]")
 
-            # Try to get queue item ID from Location header for tracking
-            queue_item_id = None
-            if "Location" in response.headers:
-                location = response.headers["Location"]
-                console.print(f"[blue]Build queue location: {location}[/blue]")
-                # Extract queue item ID from location URL
-                if "/queue/item/" in location:
-                    queue_item_id = location.split("/queue/item/")[1].rstrip("/")
-                    console.print(f"[blue]Queue item ID: {queue_item_id}[/blue]")
+        # Try to get queue item ID from Location header for tracking
+        queue_item_id = None
+        if "Location" in response.headers:
+            location = response.headers["Location"]
+            console.print(f"[blue]Build queue location: {location}[/blue]")
+            # Extract queue item ID from location URL
+            if "/queue/item/" in location:
+                queue_item_id = location.split("/queue/item/")[1].rstrip("/")
+                console.print(f"[blue]Queue item ID: {queue_item_id}[/blue]")
 
-            if queue_item_id:
-                return f"{job_name.capitalize()} job triggered (Queue ID: {queue_item_id})"
-            else:
-                return f"{job_name.capitalize()} job triggered"
-        except Exception as e:
-            console.print(f"[red]Failed to trigger {job_name} build: {e}[/red]")
-            raise
+        if queue_item_id:
+            return f"{job_name.capitalize()} job triggered (Queue ID: {queue_item_id})"
+        else:
+            return f"{job_name.capitalize()} job triggered"
+    except Exception as e:
+        console.print(f"[red]Failed to trigger {job_name} build: {e}[/red]")
+        raise
 
 
 async def get_jenkins_console_log(job_name: str, build_number: str) -> str:
     """Fetch Jenkins console log for a specific job and build number."""
     console.print(f"[blue]Fetching console log for {job_name} #{build_number}[/blue]")
 
-    async with httpx.AsyncClient() as client:
-        try:
-            console_url = f"{settings.JENKINS_URL}/job/{job_name}/{build_number}/consoleText"
-            response = await client.get(
-                console_url,
-                auth=(settings.JENKINS_USER_NAME, settings.JENKINS_USER_TOKEN),
-                timeout=30.0,
-            )
-            response.raise_for_status()
+    try:
+        console_url = f"{settings.JENKINS_URL}/job/{job_name}/{build_number}/consoleText"
+        response = await retry_http_request(
+            "GET",
+            console_url,
+            auth=(settings.JENKINS_USER_NAME, settings.JENKINS_USER_TOKEN),
+        )
 
-            console_log = response.text
-            console.print(f"[green]Successfully fetched {len(console_log)} characters of console log[/green]")
-            return console_log
+        console_log = response.text
+        console.print(f"[green]Successfully fetched {len(console_log)} characters of console log[/green]")
+        return console_log
 
-        except Exception as e:
-            console.print(f"[red]Failed to fetch console log: {e}[/red]")
-            raise
+    except Exception as e:
+        console.print(f"[red]Failed to fetch console log: {e}[/red]")
+        raise
 
 
 async def get_jenkins_build_timestamp(job_name: str, build_number: str) -> Optional[str]:
     """Get the build timestamp from Jenkins for a specific job and build number."""
     console.print(f"[blue]Fetching build timestamp for {job_name} #{build_number}[/blue]")
 
-    async with httpx.AsyncClient() as client:
-        try:
-            build_url = f"{settings.JENKINS_URL}/job/{job_name}/{build_number}/api/json"
-            response = await client.get(
-                build_url,
-                params={"tree": "timestamp"},
-                auth=(settings.JENKINS_USER_NAME, settings.JENKINS_USER_TOKEN),
-                timeout=30.0,
-            )
-            response.raise_for_status()
+    try:
+        build_url = f"{settings.JENKINS_URL}/job/{job_name}/{build_number}/api/json"
+        response = await retry_http_request(
+            "GET",
+            build_url,
+            params={"tree": "timestamp"},
+            auth=(settings.JENKINS_USER_NAME, settings.JENKINS_USER_TOKEN),
+        )
 
-            data = response.json()
-            timestamp_ms = data.get("timestamp")
-            if timestamp_ms:
-                # Convert from milliseconds to seconds and format as readable datetime
-                timestamp_dt = datetime.fromtimestamp(timestamp_ms / 1000)
-                formatted_timestamp = timestamp_dt.strftime("%Y-%m-%d %H:%M:%S UTC")
-                console.print(f"[green]Build timestamp: {formatted_timestamp}[/green]")
-                return formatted_timestamp
-            else:
-                console.print("[yellow]No timestamp found in build data[/yellow]")
-                return None
-
-        except Exception as e:
-            console.print(f"[red]Failed to fetch build timestamp: {e}[/red]")
+        data = response.json()
+        timestamp_ms = data.get("timestamp")
+        if timestamp_ms:
+            # Convert from milliseconds to seconds and format as readable datetime
+            timestamp_dt = datetime.fromtimestamp(timestamp_ms / 1000)
+            formatted_timestamp = timestamp_dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+            console.print(f"[green]Build timestamp: {formatted_timestamp}[/green]")
+            return formatted_timestamp
+        else:
+            console.print("[yellow]No timestamp found in build data[/yellow]")
             return None
+
+    except Exception as e:
+        console.print(f"[red]Failed to fetch build timestamp: {e}[/red]")
+        return None
 
 
 async def cancel_jenkins_job(job_id: str, use_privdump: bool = False) -> str:
@@ -261,9 +298,11 @@ async def cancel_jenkins_job(job_id: str, use_privdump: bool = False) -> str:
     job_name = "privdump" if use_privdump else "dumpyara"
     console.print(f"[blue]Attempting to cancel {job_name} job {job_id}[/blue]")
 
-    async with httpx.AsyncClient() as client:
+    try:
+        # Try to cancel running job first
         try:
-            response = await client.post(
+            response = await retry_http_request(
+                "POST",
                 f"{settings.JENKINS_URL}/job/{job_name}/{job_id}/stop",
                 auth=(settings.JENKINS_USER_NAME, settings.JENKINS_USER_TOKEN),
                 follow_redirects=True,
@@ -273,29 +312,37 @@ async def cancel_jenkins_job(job_id: str, use_privdump: bool = False) -> str:
                     f"[green]Successfully cancelled {job_name} job {job_id}[/green]"
                 )
                 return f"Job with ID {job_id} has been cancelled in {job_name}."
-            elif response.status_code == 404:
-                console.print(
-                    f"[yellow]Job {job_id} not found, checking queue[/yellow]"
-                )
-                response = await client.post(
-                    f"{settings.JENKINS_URL}/queue/cancelItem",
-                    params={"id": job_id},
-                    auth=(settings.JENKINS_USER_NAME, settings.JENKINS_USER_TOKEN),
-                    follow_redirects=True,
-                )
-                if response.status_code == 204:
-                    console.print(
-                        f"[green]Successfully removed {job_name} job {job_id} from queue[/green]"
-                    )
-                    return f"Job with ID {job_id} has been removed from the {job_name} queue."
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code != 404:
+                raise  # Re-raise if not a 404 error
 
-            console.print(f"[yellow]Failed to cancel {job_name} job {job_id}[/yellow]")
-            return f"Failed to cancel job with ID {job_id} in {job_name}. Job not found or already completed."
-        except Exception as e:
-            console.print(
-                f"[red]Error while cancelling {job_name} job {job_id}: {e}[/red]"
+        # If job not found (404), try to cancel from queue
+        console.print(f"[yellow]Job {job_id} not found, checking queue[/yellow]")
+
+        try:
+            response = await retry_http_request(
+                "POST",
+                f"{settings.JENKINS_URL}/queue/cancelItem",
+                params={"id": job_id},
+                auth=(settings.JENKINS_USER_NAME, settings.JENKINS_USER_TOKEN),
+                follow_redirects=True,
             )
-            raise
+            if response.status_code == 204:
+                console.print(
+                    f"[green]Successfully removed {job_name} job {job_id} from queue[/green]"
+                )
+                return f"Job with ID {job_id} has been removed from the {job_name} queue."
+        except httpx.HTTPStatusError:
+            pass  # Queue cancellation failed
+
+        console.print(f"[yellow]Failed to cancel {job_name} job {job_id}[/yellow]")
+        return f"Failed to cancel job with ID {job_id} in {job_name}. Job not found or already completed."
+
+    except Exception as e:
+        console.print(
+            f"[red]Error while cancelling {job_name} job {job_id}: {e}[/red]"
+        )
+        raise
 
 
 async def get_random_jenkins_build() -> Optional[Tuple[str, schemas.JenkinsBuild, str]]:
@@ -313,49 +360,47 @@ async def get_random_jenkins_build() -> Optional[Tuple[str, schemas.JenkinsBuild
     for job_name in job_candidates:
         try:
             # Get recent builds (limit to last 50 for performance)
-            async with httpx.AsyncClient() as client:
-                response = await client.get(
-                    f"{settings.JENKINS_URL}/job/{job_name}/api/json",
-                    params={
-                        "tree": "builds[number,result,timestamp]{0,50}"
-                    },
-                    auth=(settings.JENKINS_USER_NAME, settings.JENKINS_USER_TOKEN),
-                    timeout=30.0,
-                )
-                response.raise_for_status()
+            response = await retry_http_request(
+                "GET",
+                f"{settings.JENKINS_URL}/job/{job_name}/api/json",
+                params={
+                    "tree": "builds[number,result,timestamp]{0,50}"
+                },
+                auth=(settings.JENKINS_USER_NAME, settings.JENKINS_USER_TOKEN),
+            )
 
-                builds_data = response.json().get("builds", [])
-                if not builds_data:
-                    console.print(f"[yellow]No builds found for {job_name}[/yellow]")
-                    continue
+            builds_data = response.json().get("builds", [])
+            if not builds_data:
+                console.print(f"[yellow]No builds found for {job_name}[/yellow]")
+                continue
 
-                # Filter for completed builds (both successful and failed are interesting)
-                completed_builds = [
-                    build for build in builds_data
-                    if build.get("result") in ["SUCCESS", "FAILURE", "UNSTABLE"]
-                ]
+            # Filter for completed builds (both successful and failed are interesting)
+            completed_builds = [
+                build for build in builds_data
+                if build.get("result") in ["SUCCESS", "FAILURE", "UNSTABLE"]
+            ]
 
-                if not completed_builds:
-                    console.print(f"[yellow]No completed builds found for {job_name}[/yellow]")
-                    continue
+            if not completed_builds:
+                console.print(f"[yellow]No completed builds found for {job_name}[/yellow]")
+                continue
 
-                # Select random completed build
-                selected_build_data = secrets.choice(completed_builds)
-                build_number = selected_build_data["number"]
+            # Select random completed build
+            selected_build_data = secrets.choice(completed_builds)
+            build_number = selected_build_data["number"]
 
-                console.print(f"[green]Selected random build: {job_name} #{build_number}[/green]")
+            console.print(f"[green]Selected random build: {job_name} #{build_number}[/green]")
 
-                # Create build object
-                build = schemas.JenkinsBuild(
-                    number=build_number,
-                    result=selected_build_data.get("result"),
-                    actions=None  # We don't need actions for surprise generation
-                )
+            # Create build object
+            build = schemas.JenkinsBuild(
+                number=build_number,
+                result=selected_build_data.get("result"),
+                actions=None  # We don't need actions for surprise generation
+            )
 
-                # Fetch console log for this build
-                console_log = await get_jenkins_console_log(job_name, str(build_number))
+            # Fetch console log for this build
+            console_log = await get_jenkins_console_log(job_name, str(build_number))
 
-                return (job_name, build, console_log)
+            return (job_name, build, console_log)
 
         except Exception as e:
             console.print(f"[yellow]Failed to get random build from {job_name}: {e}[/yellow]")

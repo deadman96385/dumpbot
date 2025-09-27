@@ -1,13 +1,13 @@
-import asyncio
 import os
 import shutil
-import subprocess
 from pathlib import Path
 from typing import List, Optional, Tuple
 
 from rich.console import Console
 
 from dumpyarabot.schemas import DumpJob
+from dumpyarabot.process_utils import run_command, run_extraction_command, run_git_command, run_analysis_command
+from dumpyarabot.file_utils import find_files_by_pattern, move_file_to_root, safe_remove_file
 
 console = Console()
 
@@ -30,21 +30,14 @@ class FirmwareExtractor:
 
     async def _extract_with_python_dumper(self, firmware_path: str) -> str:
         """Extract using the modern Python dumpyara tool."""
-        console.print("[blue]Using Python dumper (dumpyara)...[/blue]")
-
-        result = await asyncio.create_subprocess_exec(
+        result = await run_command(
             "uvx", "dumpyara", firmware_path, "-o", str(self.work_dir),
             cwd=self.work_dir,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
+            timeout=600.0,
+            check=True,
+            description="Python dumper extraction"
         )
 
-        stdout, stderr = await result.communicate()
-
-        if result.returncode != 0:
-            raise Exception(f"Python dumper extraction failed: {stderr.decode()}")
-
-        console.print("[green]Python dumper extraction completed[/green]")
         return str(self.work_dir)
 
     async def _extract_with_alternative_dumper(self, firmware_path: str) -> str:
@@ -56,17 +49,13 @@ class FirmwareExtractor:
 
         # Run the extractor script
         extractor_script = self.firmware_extractor_path / "extractor.sh"
-        result = await asyncio.create_subprocess_exec(
+        result = await run_command(
             "bash", str(extractor_script), firmware_path, str(self.work_dir),
             cwd=self.work_dir,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
+            timeout=600.0,
+            check=True,
+            description="Alternative dumper extraction"
         )
-
-        stdout, stderr = await result.communicate()
-
-        if result.returncode != 0:
-            raise Exception(f"Alternative dumper extraction failed: {stderr.decode()}")
 
         # Extract individual partitions
         await self._extract_partitions()
@@ -77,23 +66,17 @@ class FirmwareExtractor:
     async def _setup_firmware_extractor(self):
         """Clone or update the Firmware_extractor repository."""
         if not self.firmware_extractor_path.exists():
-            console.print("[blue]Cloning Firmware_extractor...[/blue]")
-            result = await asyncio.create_subprocess_exec(
-                "git", "clone", "-q",
+            await run_git_command(
+                "clone", "-q",
                 "https://github.com/AndroidDumps/Firmware_extractor",
                 str(self.firmware_extractor_path),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                description="Cloning Firmware_extractor"
             )
-            await result.communicate()
         else:
-            console.print("[blue]Updating Firmware_extractor...[/blue]")
-            result = await asyncio.create_subprocess_exec(
-                "git", "-C", str(self.firmware_extractor_path), "pull", "-q", "--rebase",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+            await run_git_command(
+                "-C", str(self.firmware_extractor_path), "pull", "-q", "--rebase",
+                description="Updating Firmware_extractor"
             )
-            await result.communicate()
 
     async def _extract_partitions(self):
         """Extract individual partition images using alternative dumper tools."""
@@ -123,44 +106,35 @@ class FirmwareExtractor:
 
             # Method 1: fsck.erofs
             if fsck_erofs.exists():
-                console.print(f"[blue]Extracting '{partition}' via fsck.erofs...[/blue]")
-                result = await asyncio.create_subprocess_exec(
+                result = await run_extraction_command(
                     str(fsck_erofs), f"--extract={partition_dir}", str(img_file),
-                    stdout=asyncio.subprocess.DEVNULL,
-                    stderr=asyncio.subprocess.DEVNULL
+                    description=f"Extracting '{partition}' via fsck.erofs"
                 )
-                await result.communicate()
-                if result.returncode == 0:
+                if result.success:
                     success = True
 
             # Method 2: ext2rd
             if not success and ext2rd.exists():
-                console.print(f"[blue]Extracting '{partition}' via ext2rd...[/blue]")
-                result = await asyncio.create_subprocess_exec(
+                result = await run_extraction_command(
                     str(ext2rd), str(img_file), f"./{partition}",
                     cwd=self.work_dir,
-                    stdout=asyncio.subprocess.DEVNULL,
-                    stderr=asyncio.subprocess.DEVNULL
+                    description=f"Extracting '{partition}' via ext2rd"
                 )
-                await result.communicate()
-                if result.returncode == 0:
+                if result.success:
                     success = True
 
             # Method 3: 7zip
             if not success:
-                console.print(f"[blue]Extracting '{partition}' via 7zz...[/blue]")
-                result = await asyncio.create_subprocess_exec(
+                result = await run_extraction_command(
                     "7zz", "-snld", "x", str(img_file), "-y", f"-o{partition_dir}/",
-                    stdout=asyncio.subprocess.DEVNULL,
-                    stderr=asyncio.subprocess.DEVNULL
+                    description=f"Extracting '{partition}' via 7zz"
                 )
-                await result.communicate()
-                if result.returncode == 0:
+                if result.success:
                     success = True
 
             if success:
                 # Clean up the image file
-                img_file.unlink()
+                safe_remove_file(img_file)
                 console.print(f"[green]Successfully extracted {partition}[/green]")
             else:
                 console.print(f"[yellow]Failed to extract {partition}[/yellow]")
@@ -182,15 +156,13 @@ class FirmwareExtractor:
         fsg_dir = self.work_dir / "radio" / "fsg"
         fsg_dir.mkdir(parents=True, exist_ok=True)
 
-        result = await asyncio.create_subprocess_exec(
+        result = await run_extraction_command(
             "7zz", "-snld", "x", str(fsg_file), f"-o{fsg_dir}",
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL
+            description="Extracting fsg.mbn via 7zz"
         )
-        await result.communicate()
 
-        if result.returncode == 0:
-            fsg_file.unlink()
+        if result.success:
+            safe_remove_file(fsg_file)
             console.print("[green]Successfully extracted fsg.mbn[/green]")
 
     async def process_boot_images(self) -> None:
@@ -199,12 +171,9 @@ class FirmwareExtractor:
 
         # Move boot images to work directory root if they're in subdirectories
         for image_name in boot_images:
-            found_images = list(self.work_dir.rglob(image_name))
+            found_images = find_files_by_pattern(self.work_dir, [image_name], recursive=True)
             if found_images and not (self.work_dir / image_name).exists():
-                src = found_images[0]
-                dst = self.work_dir / image_name
-                console.print(f"[blue]Moving {image_name} to root directory[/blue]")
-                shutil.move(str(src), str(dst))
+                move_file_to_root(found_images[0], self.work_dir)
 
         # Process each boot image
         for image_name in boot_images:
@@ -273,17 +242,13 @@ class FirmwareExtractor:
         if not unpackbootimg.exists():
             return
 
-        console.print(f"[blue]Unpacking {image_path.name}...[/blue]")
-
         ramdisk_dir = output_dir / "ramdisk"
         ramdisk_dir.mkdir(exist_ok=True)
 
-        result = await asyncio.create_subprocess_exec(
+        await run_extraction_command(
             str(unpackbootimg), "-i", str(image_path), "-o", str(output_dir),
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL
+            description=f"Unpacking {image_path.name}"
         )
-        await result.communicate()
 
         # Extract ramdisk if present
         await self._extract_ramdisk(output_dir, ramdisk_dir)
@@ -297,107 +262,91 @@ class FirmwareExtractor:
         ramdisk_file = ramdisk_files[0]
 
         # Check if it's compressed
-        result = await asyncio.create_subprocess_exec(
+        result = await run_analysis_command(
             "file", str(ramdisk_file),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
+            description="Checking ramdisk compression"
         )
-        stdout, _ = await result.communicate()
-        file_info = stdout.decode()
+
+        if not result.success:
+            return
+
+        file_info = result.stdout
 
         if "LZ4" in file_info or "gzip" in file_info:
             console.print("[blue]Extracting compressed ramdisk...[/blue]")
 
             # Decompress with unlz4
             temp_ramdisk = output_dir / "ramdisk.lz4"
-            result = await asyncio.create_subprocess_exec(
+            decompress_result = await run_extraction_command(
                 "unlz4", str(ramdisk_file), str(temp_ramdisk),
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL
+                description="Decompressing ramdisk"
             )
-            await result.communicate()
 
-            if temp_ramdisk.exists():
+            if decompress_result.success and temp_ramdisk.exists():
                 # Extract with 7zip
-                result = await asyncio.create_subprocess_exec(
+                await run_extraction_command(
                     "7zz", "-snld", "x", str(temp_ramdisk), f"-o{ramdisk_dir}",
-                    stdout=asyncio.subprocess.DEVNULL,
-                    stderr=asyncio.subprocess.DEVNULL
+                    description="Extracting ramdisk archive"
                 )
-                await result.communicate()
-                temp_ramdisk.unlink()
+                safe_remove_file(temp_ramdisk)
 
     async def _extract_ikconfig(self, image_path: Path):
         """Extract kernel configuration."""
-        console.print("[blue]Extracting ikconfig...[/blue]")
-
         ikconfig_path = self.work_dir / "ikconfig"
 
         try:
-            result = await asyncio.create_subprocess_exec(
+            result = await run_analysis_command(
                 "extract-ikconfig", str(image_path),
-                stdout=open(ikconfig_path, 'w'),
-                stderr=asyncio.subprocess.DEVNULL
+                output_file=ikconfig_path,
+                description="Extracting ikconfig"
             )
-            await result.communicate()
 
-            if result.returncode == 0 and ikconfig_path.exists():
+            if result.success and ikconfig_path.exists():
                 console.print("[green]ikconfig extracted successfully[/green]")
             else:
                 console.print("[yellow]Failed to extract ikconfig[/yellow]")
-                if ikconfig_path.exists():
-                    ikconfig_path.unlink()
+                safe_remove_file(ikconfig_path)
         except FileNotFoundError:
             console.print("[yellow]extract-ikconfig tool not found, skipping ikconfig extraction[/yellow]")
         except Exception as e:
             console.print(f"[yellow]Error extracting ikconfig: {e}[/yellow]")
-            if ikconfig_path.exists():
-                ikconfig_path.unlink()
+            safe_remove_file(ikconfig_path)
 
     async def _extract_kallsyms(self, image_path: Path):
         """Extract kernel symbols."""
-        console.print("[blue]Generating kallsyms.txt...[/blue]")
-
         kallsyms_path = self.work_dir / "kallsyms.txt"
 
         try:
-            result = await asyncio.create_subprocess_exec(
+            result = await run_analysis_command(
                 "uvx", "--from", "git+https://github.com/marin-m/vmlinux-to-elf@master",
                 "kallsyms-finder", str(image_path),
-                stdout=open(kallsyms_path, 'w'),
-                stderr=asyncio.subprocess.DEVNULL
+                output_file=kallsyms_path,
+                description="Generating kallsyms.txt"
             )
-            await result.communicate()
 
-            if result.returncode == 0 and kallsyms_path.exists():
+            if result.success and kallsyms_path.exists():
                 console.print("[green]kallsyms.txt generated successfully[/green]")
             else:
                 console.print("[yellow]Failed to generate kallsyms.txt[/yellow]")
-                if kallsyms_path.exists():
-                    kallsyms_path.unlink()
+                safe_remove_file(kallsyms_path)
         except FileNotFoundError:
             console.print("[yellow]uvx or kallsyms-finder tool not found, skipping kallsyms extraction[/yellow]")
         except Exception as e:
             console.print(f"[yellow]Error extracting kallsyms: {e}[/yellow]")
-            if kallsyms_path.exists():
-                kallsyms_path.unlink()
+            safe_remove_file(kallsyms_path)
 
     async def _extract_boot_elf(self, image_path: Path):
         """Extract analyzable ELF file."""
-        console.print("[blue]Extracting boot.elf...[/blue]")
-
         elf_path = self.work_dir / "boot.elf"
 
         try:
-            result = await asyncio.create_subprocess_exec(
+            result = await run_analysis_command(
                 "uvx", "--from", "git+https://github.com/marin-m/vmlinux-to-elf@master",
                 "vmlinux-to-elf", str(image_path), str(elf_path),
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL
+                description="Extracting boot.elf"
             )
-            await result.communicate()
 
-            if result.returncode == 0 and elf_path.exists():
+            if result.success and elf_path.exists():
                 console.print("[green]boot.elf extracted successfully[/green]")
             else:
                 console.print("[yellow]Failed to extract boot.elf[/yellow]")
@@ -422,14 +371,12 @@ class FirmwareExtractor:
 
         # Extract DTBs
         try:
-            result = await asyncio.create_subprocess_exec(
+            result = await run_extraction_command(
                 "extract-dtb", str(image_path), "-o", str(dtb_dir),
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL
+                description=f"{image_path.name}: Extracting device-tree blobs"
             )
-            await result.communicate()
 
-            if result.returncode != 0:
+            if not result.success:
                 console.print("[yellow]No device-tree blobs found[/yellow]")
                 return
         except FileNotFoundError:
@@ -453,25 +400,22 @@ class FirmwareExtractor:
                 dts_file = dts_dir / f"{dtb_file.stem}.dts"
 
                 try:
-                    result = await asyncio.create_subprocess_exec(
+                    result = await run_analysis_command(
                         "dtc", "-q", "-I", "dtb", "-O", "dts", str(dtb_file),
-                        stdout=open(dts_file, 'w'),
-                        stderr=asyncio.subprocess.DEVNULL
+                        output_file=dts_file,
+                        description=f"Decompiling {dtb_file.name}"
                     )
-                    await result.communicate()
 
-                    if result.returncode == 0:
+                    if result.success:
                         console.print(f"[green]Decompiled {dtb_file.name}[/green]")
                     else:
                         console.print(f"[yellow]Failed to decompile {dtb_file.name}[/yellow]")
-                        if dts_file.exists():
-                            dts_file.unlink()
+                        safe_remove_file(dts_file)
                 except FileNotFoundError:
                     console.print(f"[yellow]dtc tool not found, skipping decompilation of {dtb_file.name}[/yellow]")
                 except Exception as e:
                     console.print(f"[yellow]Error decompiling {dtb_file.name}: {e}[/yellow]")
-                    if dts_file.exists():
-                        dts_file.unlink()
+                    safe_remove_file(dts_file)
 
     async def _process_oppo_images(self):
         """Process Oppo/Realme/OnePlus images in special directories."""
@@ -493,15 +437,13 @@ class FirmwareExtractor:
                 extract_dir = img_file.parent / img_file.stem
                 extract_dir.mkdir(exist_ok=True)
 
-                result = await asyncio.create_subprocess_exec(
+                result = await run_extraction_command(
                     "7zz", "-snld", "x", str(img_file), f"-o{extract_dir}",
-                    stdout=asyncio.subprocess.DEVNULL,
-                    stderr=asyncio.subprocess.DEVNULL
+                    description=f"Extracting {img_file.name}"
                 )
-                await result.communicate()
 
-                if result.returncode == 0:
-                    img_file.unlink()
+                if result.success:
+                    safe_remove_file(img_file)
                     console.print(f"[green]Extracted {img_file.name}[/green]")
                 else:
                     console.print(f"[yellow]Failed to extract {img_file.name}[/yellow]")
