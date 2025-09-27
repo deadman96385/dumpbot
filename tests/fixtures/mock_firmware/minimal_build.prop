@@ -1,0 +1,10 @@
+# begin build properties
+ro.build.id=TEST123
+ro.build.version.sdk=33
+ro.build.version.release=13
+ro.product.model=TestDevice
+ro.product.brand=TestBrand
+ro.product.device=testdevice
+ro.product.manufacturer=TestManufacturer
+ro.build.fingerprint=TestBrand/testdevice/testdevice:13/TEST123/test123:user/test-keys
+# end build properties

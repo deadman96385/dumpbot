@@ -206,6 +206,17 @@ async def handle_callback_query(
         console.print(f"[red]Unknown callback data: {callback_data}[/red]")
 
 
+async def handle_enhanced_callback_query(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Enhanced callback handler that supports moderated system callbacks.
+
+    This is an alias for handle_callback_query to maintain compatibility
+    with E2E test infrastructure that expects this function name.
+    """
+    await handle_callback_query(update, context)
+
+
 async def _handle_accept_callback(
     query: Any, context: ContextTypes.DEFAULT_TYPE, callback_data: str
 ) -> None:

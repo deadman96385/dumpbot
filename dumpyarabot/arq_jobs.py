@@ -269,6 +269,7 @@ async def process_firmware_dump(ctx, job_data: Dict[str, Any]) -> Dict[str, Any]
                 dump_job = DumpJob.model_validate(job_data)
 
                 # Use periodic timer for download operation
+                download_progress = {"current_step": "Download", "total_steps": 25, "current_step_number": 4, "percentage": 16.0}
                 async with PeriodicTimerUpdate(job_data, "📥 Downloading firmware...", download_progress):
                     firmware_path, firmware_name = await downloader.download_firmware(dump_job)
 
@@ -309,6 +310,7 @@ async def process_firmware_dump(ctx, job_data: Dict[str, Any]) -> Dict[str, Any]
                     raise Exception("DUMPER_TOKEN not configured")
 
                 # Use periodic timer for GitLab operation (longest operation)
+                gitlab_progress = {"current_step": "GitLab", "total_steps": 25, "current_step_number": 15, "percentage": 60.0}
                 async with PeriodicTimerUpdate(job_data, "🗂️ Creating GitLab repository...", gitlab_progress):
                     repo_url, repo_path = await gitlab_manager.create_and_push_repository(device_props, dumper_token)
 
@@ -349,17 +351,35 @@ async def process_firmware_dump(ctx, job_data: Dict[str, Any]) -> Dict[str, Any]
                 console.print(f"[red]Error in inner processing for job {job_id}: {e}[/red]")
 
                 # Enhanced error handling
-                job_data["metadata"].update({
-                    "status": "failed",
-                    "end_time": datetime.now(timezone.utc).isoformat(),
-                    "error_context": {
-                        "message": str(e),
-                        "current_step": job_data.get("progress", {}).get("current_step", "Unknown step"),
-                        "last_successful_step": job_data["metadata"]["progress_history"][-1]["message"] if job_data["metadata"]["progress_history"] else "None",
-                        "failure_time": datetime.now(timezone.utc).isoformat(),
-                        "traceback": traceback.format_exc()
+                if job_data.get("metadata"):
+                    job_data["metadata"].update({
+                        "status": "failed",
+                        "end_time": datetime.now(timezone.utc).isoformat(),
+                        "error_context": {
+                            "message": str(e),
+                             "current_step": job_data.get("progress", {}).get("current_step", "Unknown step"),
+                             "last_successful_step": (
+                                 job_data["metadata"]["progress_history"][-1]["message"]
+                                 if job_data.get("metadata", {}).get("progress_history")
+                                 else "None"
+                             ),
+                            "failure_time": datetime.now(timezone.utc).isoformat(),
+                            "traceback": traceback.format_exc()
+                        }
+                    })
+                else:
+                    # Initialize metadata if it doesn't exist
+                    job_data["metadata"] = {
+                        "status": "failed",
+                        "end_time": datetime.now(timezone.utc).isoformat(),
+                        "error_context": {
+                            "message": str(e),
+                            "current_step": job_data.get("progress", {}).get("current_step", "Unknown step"),
+                            "last_successful_step": "None",
+                            "failure_time": datetime.now(timezone.utc).isoformat(),
+                            "traceback": traceback.format_exc()
+                        }
                     }
-                })
 
                 # Send failure notification using existing message queue system
                 await _send_failure_notification(job_data, str(e))
@@ -371,17 +391,35 @@ async def process_firmware_dump(ctx, job_data: Dict[str, Any]) -> Dict[str, Any]
         console.print_exception()
 
         # Enhanced error handling for critical errors
-        job_data["metadata"].update({
-            "status": "failed",
-            "end_time": datetime.now(timezone.utc).isoformat(),
-            "error_context": {
-                "message": f"Critical error: {str(e)}",
-                "current_step": "Critical failure",
-                "last_successful_step": job_data["metadata"]["progress_history"][-1]["message"] if job_data["metadata"]["progress_history"] else "None",
-                "failure_time": datetime.now(timezone.utc).isoformat(),
-                "traceback": traceback.format_exc()
+        if job_data.get("metadata"):
+            job_data["metadata"].update({
+                "status": "failed",
+                "end_time": datetime.now(timezone.utc).isoformat(),
+                "error_context": {
+                    "message": f"Critical error: {str(e)}",
+                    "current_step": "Critical failure",
+                     "last_successful_step": (
+                         job_data["metadata"]["progress_history"][-1]["message"]
+                         if job_data.get("metadata", {}).get("progress_history")
+                         else "None"
+                     ),
+                    "failure_time": datetime.now(timezone.utc).isoformat(),
+                    "traceback": traceback.format_exc()
+                }
+            })
+        else:
+            # Initialize metadata if it doesn't exist
+            job_data["metadata"] = {
+                "status": "failed",
+                "end_time": datetime.now(timezone.utc).isoformat(),
+                "error_context": {
+                    "message": f"Critical error: {str(e)}",
+                    "current_step": "Critical failure",
+                    "last_successful_step": "None",
+                    "failure_time": datetime.now(timezone.utc).isoformat(),
+                    "traceback": traceback.format_exc()
+                }
             }
-        })
 
         # Send failure notification for any unhandled exceptions
         try:

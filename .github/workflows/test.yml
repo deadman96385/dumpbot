@@ -1,0 +1,103 @@
+name: Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      redis:
+        image: redis:alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v2
+      with:
+        enable-cache: true
+
+    - name: Install dependencies
+      run: uv sync --extra test
+
+    - name: Run linting
+      run: |
+        uv run ruff check .
+        uv run mypy dumpyarabot/
+
+    - name: Run unit tests
+      run: uv run pytest tests/unit/ -v --cov=dumpyarabot --cov-report=xml
+
+    - name: Run integration tests
+      run: uv run pytest tests/integration/ -v --cov=dumpyarabot --cov-report=xml --cov-append
+      env:
+        TEST_REDIS_URL: redis://localhost:6379/0
+
+    - name: Upload coverage reports
+      uses: codecov/codecov-action@v4
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+
+  e2e-test:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || contains(github.event.head_commit.message, '[e2e]'))
+
+    services:
+      redis:
+        image: redis:alpine
+        ports:
+          - 6379:6379
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v2
+
+    - name: Install dependencies
+      run: uv sync --extra test
+
+    - name: Run E2E tests
+      run: uv run pytest tests/e2e/ -v -k "not slow"
+      env:
+        TEST_BOT_TOKEN: ${{ secrets.TEST_BOT_TOKEN }}
+        TEST_DUMP_CHAT_ID: ${{ secrets.TEST_DUMP_CHAT_ID }}
+        TEST_REQUEST_CHAT_ID: ${{ secrets.TEST_REQUEST_CHAT_ID }}
+        TEST_REVIEW_CHAT_ID: ${{ secrets.TEST_REVIEW_CHAT_ID }}
+        TEST_GITLAB_SERVER: ${{ secrets.TEST_GITLAB_SERVER }}
+        TEST_GITLAB_TOKEN: ${{ secrets.TEST_GITLAB_TOKEN }}
+        TEST_REDIS_URL: redis://localhost:6379/0
+      timeout-minutes: 10
+
+  security:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Run security scan
+      uses: github/super-linter/slim@v5
+      env:
+        DEFAULT_BRANCH: main
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        VALIDATE_PYTHON_BLACK: false
+        VALIDATE_PYTHON_FLAKE8: false
+        VALIDATE_PYTHON_ISORT: false
+        VALIDATE_PYTHON_MYPY: false
