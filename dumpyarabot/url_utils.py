@@ -7,7 +7,9 @@ import httpx
 from pydantic import AnyHttpUrl, ValidationError
 
 
-async def validate_and_normalize_url(url_str: str) -> Tuple[bool, Optional[str], Optional[str]]:
+async def validate_and_normalize_url(
+    url_str: str,
+) -> Tuple[bool, Optional[str], Optional[str]]:
     """
     Validate URL and return (is_valid, normalized_url, error_message).
 
@@ -66,7 +68,9 @@ def parse_url_components(url: str) -> Optional[tuple[str, str, str]]:
         return None
 
 
-async def validate_firmware_url(url_str: str, check_accessibility: bool = True) -> Tuple[bool, Optional[str], Optional[str]]:
+async def validate_firmware_url(
+    url_str: str, check_accessibility: bool = True
+) -> Tuple[bool, Optional[str], Optional[str]]:
     """
     Complete firmware URL validation including format and accessibility checks.
 

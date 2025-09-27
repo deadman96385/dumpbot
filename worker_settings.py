@@ -8,4 +8,4 @@ Run with: arq worker_settings.WorkerSettings
 from dumpyarabot.arq_config import WorkerSettings
 
 # Export the settings for ARQ CLI
-__all__ = ['WorkerSettings']
+__all__ = ["WorkerSettings"]

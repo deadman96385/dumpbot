@@ -7,8 +7,10 @@ from dumpyarabot.schemas import AcceptOptionsState, MockupState, PendingReview
 # Check if Redis is available and configured
 try:
     from dumpyarabot.config import settings
-    if hasattr(settings, 'REDIS_URL') and settings.REDIS_URL:
+
+    if hasattr(settings, "REDIS_URL") and settings.REDIS_URL:
         from dumpyarabot.redis_storage import ReviewStorage as RedisReviewStorage
+
         USE_REDIS = True
     else:
         USE_REDIS = False
@@ -158,4 +160,3 @@ class ReviewStorage:
                 and request_id in context.bot_data["mockup_states"]
             ):
                 del context.bot_data["mockup_states"][request_id]
-

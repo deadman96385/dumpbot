@@ -92,5 +92,3 @@ def create_submission_keyboard(request_id: str) -> InlineKeyboardMarkup:
         ]
     ]
     return InlineKeyboardMarkup(keyboard)
-
-

@@ -5,13 +5,19 @@ Provides fixtures and utilities for testing complete bot workflows.
 import asyncio
 import os
 import uuid
-from typing import Dict, List, Optional, Any, Callable
 from contextlib import asynccontextmanager
+from typing import Callable, Dict, List, Optional
 
-from telegram import Bot, Update, CallbackQuery, Message, Chat, User
-from telegram.ext import ApplicationBuilder, CallbackQueryHandler, MessageHandler, CommandHandler, filters
+from telegram import Bot, CallbackQuery, Message, Update, User
+from telegram.ext import (
+    ApplicationBuilder,
+    CallbackQueryHandler,
+    CommandHandler,
+    MessageHandler,
+    filters,
+)
 
-from dumpyarabot import handlers, moderated_handlers, mockup_handlers
+from dumpyarabot import handlers, mockup_handlers, moderated_handlers
 from dumpyarabot.config import settings
 from dumpyarabot.message_queue import message_queue
 
@@ -29,27 +35,23 @@ class CallbackInjector:
         message: Message,
         user_id: int = 123456789,
         username: str = "test_admin",
-        chat_instance: str = "test_instance"
+        chat_instance: str = "test_instance",
     ) -> None:
         """Inject a callback query into the bot application."""
         # Create callback query
         callback_query = CallbackQuery(
             id=f"test_callback_{uuid.uuid4().hex[:8]}",
             from_user=User(
-                id=user_id,
-                is_bot=False,
-                first_name="Test Admin",
-                username=username
+                id=user_id, is_bot=False, first_name="Test Admin", username=username
             ),
             chat_instance=chat_instance,
             data=callback_data,
-            message=message
+            message=message,
         )
 
         # Create update
         update = Update(
-            update_id=int(uuid.uuid4().hex[:8], 16),
-            callback_query=callback_query
+            update_id=int(uuid.uuid4().hex[:8], 16), callback_query=callback_query
         )
 
         # Process the update
@@ -97,9 +99,11 @@ class MessageMonitor:
                     try:
                         updates = await self.bot.get_updates(limit=10, timeout=1)
                         for update in updates:
-                            if (update.message and
-                                update.message.chat.id == chat_id and
-                                update.message not in self.message_history[chat_id]):
+                            if (
+                                update.message
+                                and update.message.chat.id == chat_id
+                                and update.message not in self.message_history[chat_id]
+                            ):
                                 self.message_history[chat_id].append(update.message)
                     except Exception:
                         # Ignore polling errors
@@ -114,7 +118,7 @@ class MessageMonitor:
         chat_id: int,
         predicate: Callable[[Message], bool],
         timeout: int = 30,
-        poll_interval: float = 0.5
+        poll_interval: float = 0.5,
     ) -> Optional[Message]:
         """Wait for a message matching the predicate in the specified chat."""
         start_time = asyncio.get_event_loop().time()
@@ -141,7 +145,9 @@ class MessageMonitor:
 
         return None
 
-    async def get_messages_since(self, chat_id: int, since_message: Message) -> List[Message]:
+    async def get_messages_since(
+        self, chat_id: int, since_message: Message
+    ) -> List[Message]:
         """Get all messages in chat since the specified message."""
         messages = self.message_history.get(chat_id, [])
         since_index = -1
@@ -151,7 +157,7 @@ class MessageMonitor:
                 break
 
         if since_index >= 0:
-            return messages[since_index + 1:]
+            return messages[since_index + 1 :]
         return messages
 
     def get_all_messages(self, chat_id: int) -> List[Message]:
@@ -164,7 +170,7 @@ class ARQWorkerFixture:
 
     def __init__(self):
         self.worker_process = None
-        self.redis_url = os.getenv('TEST_REDIS_URL', 'redis://localhost:6379/0')
+        self.redis_url = os.getenv("TEST_REDIS_URL", "redis://localhost:6379/0")
 
     async def start_worker(self) -> None:
         """Start ARQ worker process."""
@@ -173,20 +179,18 @@ class ARQWorkerFixture:
 
         # Start ARQ worker as subprocess
         try:
-            cmd = [
-                sys.executable, "-m", "arq", "worker_settings.WorkerSettings"
-            ]
+            cmd = [sys.executable, "-m", "arq", "worker_settings.WorkerSettings"]
 
             # Set environment variables for the worker
             env = os.environ.copy()
-            env['REDIS_URL'] = self.redis_url
+            env["REDIS_URL"] = self.redis_url
 
             self.worker_process = subprocess.Popen(
                 cmd,
                 env=env,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                cwd=os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+                cwd=os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
             )
 
             # Wait a bit for worker to start
@@ -232,10 +236,13 @@ async def create_test_bot_application():
     accept_handler = CommandHandler("accept", moderated_handlers.accept_command)
     reject_handler = CommandHandler("reject", moderated_handlers.reject_command)
     request_message_handler = MessageHandler(
-        filters.TEXT & filters.Regex(r"#request"), moderated_handlers.handle_request_message
+        filters.TEXT & filters.Regex(r"#request"),
+        moderated_handlers.handle_request_message,
     )
     # Use enhanced callback handler that supports both production and mockup callbacks
-    callback_handler = CallbackQueryHandler(moderated_handlers.handle_enhanced_callback_query)
+    callback_handler = CallbackQueryHandler(
+        moderated_handlers.handle_enhanced_callback_query
+    )
 
     # Restart handler
     restart_handler = CommandHandler("restart", handlers.restart)

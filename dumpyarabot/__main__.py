@@ -1,24 +1,40 @@
 import os
 import sys
 
-from telegram.ext import (ApplicationBuilder, CallbackQueryHandler,
-                          CommandHandler, MessageHandler, filters, JobQueue)
+from telegram.ext import (
+    ApplicationBuilder,
+    CallbackQueryHandler,
+    CommandHandler,
+    JobQueue,
+    MessageHandler,
+    filters,
+)
 
-from dumpyarabot.handlers import blacklist, cancel_dump, dump, help_command, restart, status
+from dumpyarabot.handlers import (
+    blacklist,
+    cancel_dump,
+    dump,
+    help_command,
+    restart,
+    status,
+)
 from dumpyarabot.message_queue import message_queue
-from dumpyarabot.mockup_handlers import (handle_enhanced_callback_query,
-                                         mockup_command)
-from dumpyarabot.moderated_handlers import (accept_command,
-                                            handle_request_message,
-                                            reject_command)
+from dumpyarabot.mockup_handlers import handle_enhanced_callback_query, mockup_command
+from dumpyarabot.moderated_handlers import (
+    accept_command,
+    handle_request_message,
+    reject_command,
+)
 
 from .config import settings
 
 
-async def handle_post_restart_update(context):
+async def handle_post_restart_update(context: Any) -> None:
     """Update the original restart message to confirm successful restart."""
-    from dumpyarabot.redis_storage import RedisStorage
     from rich.console import Console
+
+    from dumpyarabot.redis_storage import RedisStorage
+
     console = Console()
 
     restart_info = RedisStorage.get_restart_message_info()
@@ -31,10 +47,13 @@ async def handle_post_restart_update(context):
             await message_queue.send_notification(
                 chat_id=restart_info["chat_id"],
                 text=f"✅ **Restart Complete**\n\n"
-                     f"👤 **Requested by:** {restart_info['user_mention']}\n"
-                     f"🚀 **Status:** Bot successfully restarted and is now online!\n\n"
-                     f"⏱️ All operations are ready to resume.",
-                context={"restart_completion": True, "message_id_to_edit": restart_info["message_id"]}
+                f"👤 **Requested by:** {restart_info['user_mention']}\n"
+                f"🚀 **Status:** Bot successfully restarted and is now online!\n\n"
+                f"⏱️ All operations are ready to resume.",
+                context={
+                    "restart_completion": True,
+                    "message_id_to_edit": restart_info["message_id"],
+                },
             )
 
             console.print("[green]Queued restart confirmation message[/green]")
@@ -49,9 +68,10 @@ async def handle_post_restart_update(context):
         console.print("[yellow]No restart message info found in Redis[/yellow]")
 
 
-async def initialize_message_queue(context):
+async def initialize_message_queue(context: Any) -> None:
     """Initialize the message queue system."""
     from rich.console import Console
+
     console = Console()
 
     try:
@@ -66,10 +86,12 @@ async def initialize_message_queue(context):
         console.print(f"[red]Failed to initialize message queue: {e}[/red]")
 
 
-async def initialize_arq(context):
+async def initialize_arq(context: Any) -> None:
     """Initialize the ARQ system."""
-    from dumpyarabot.arq_config import init_arq
     from rich.console import Console
+
+    from dumpyarabot.arq_config import init_arq
+
     console = Console()
 
     try:
@@ -79,17 +101,24 @@ async def initialize_arq(context):
         console.print(f"[red]Failed to initialize ARQ: {e}[/red]")
 
 
-async def register_bot_commands(application):
+async def register_bot_commands(application: Any) -> None:
     """Register bot commands with Telegram for the menu interface."""
-    from dumpyarabot.config import USER_COMMANDS
     from telegram import BotCommand
 
+    from dumpyarabot.config import USER_COMMANDS
+
     # Register user commands (visible to all users)
-    commands = [BotCommand(cmd, desc) for cmd, desc in USER_COMMANDS]
+    [BotCommand(cmd, desc) for cmd, desc in USER_COMMANDS]
     application.bot.delete_my_commands
 
+
 if __name__ == "__main__":
-    application = ApplicationBuilder().token(settings.TELEGRAM_BOT_TOKEN).job_queue(JobQueue()).build()
+    application: Any = (
+        ApplicationBuilder()
+        .token(settings.TELEGRAM_BOT_TOKEN)
+        .job_queue(JobQueue())
+        .build()
+    )
     application.bot_data["restart"] = False
 
     # Existing handlers
@@ -114,7 +143,6 @@ if __name__ == "__main__":
     # Restart handler - now fully implemented
     restart_handler = CommandHandler("restart", restart)
 
-
     # Add all handlers
     application.add_handler(dump_handler)
     application.add_handler(blacklist_handler)
@@ -130,7 +158,6 @@ if __name__ == "__main__":
 
     # Register bot commands on startup (if job queue is available)
     if application.job_queue:
-
         # Initialize message queue system
         application.job_queue.run_once(initialize_message_queue, 1)
 

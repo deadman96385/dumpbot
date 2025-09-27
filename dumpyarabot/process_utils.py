@@ -3,7 +3,7 @@
 import asyncio
 import os
 from pathlib import Path
-from typing import List, Optional, Tuple, Union, Dict, Any
+from typing import Dict, List, Optional, Union
 
 from rich.console import Console
 
@@ -18,7 +18,7 @@ class ProcessResult:
         returncode: int,
         stdout: str = "",
         stderr: str = "",
-        command: List[str] = None,
+        command: Optional[List[str]] = None,
         timeout_occurred: bool = False,
     ):
         self.returncode = returncode
@@ -79,8 +79,12 @@ async def run_command(
         process_env.update(env)
 
     # Prepare stdio redirects
-    stdout_redirect = asyncio.subprocess.PIPE if capture_output else asyncio.subprocess.DEVNULL
-    stderr_redirect = asyncio.subprocess.PIPE if capture_output else asyncio.subprocess.DEVNULL
+    stdout_redirect = (
+        asyncio.subprocess.PIPE if capture_output else asyncio.subprocess.DEVNULL
+    )
+    stderr_redirect = (
+        asyncio.subprocess.PIPE if capture_output else asyncio.subprocess.DEVNULL
+    )
 
     try:
         # Create and run process
@@ -102,7 +106,7 @@ async def run_command(
         stderr = stderr_bytes.decode() if stderr_bytes else ""
 
         result = ProcessResult(
-            returncode=process.returncode,
+            returncode=process.returncode or 0,
             stdout=stdout,
             stderr=stderr,
             command=command,
@@ -113,7 +117,9 @@ async def run_command(
             if result.success:
                 console.print(f"[green]{log_desc} completed successfully[/green]")
             else:
-                console.print(f"[red]{log_desc} failed with exit code {result.returncode}[/red]")
+                console.print(
+                    f"[red]{log_desc} failed with exit code {result.returncode}[/red]"
+                )
                 if stderr and len(stderr) < 500:  # Only log short error messages
                     console.print(f"[red]Error: {stderr.strip()}[/red]")
 
@@ -200,7 +206,7 @@ async def run_command_with_file_output(
 
     try:
         # Open output file
-        with open(output_file, 'w') as output_f:
+        with open(output_file, "w") as output_f:
             # Create and run process
             process = await asyncio.create_subprocess_exec(
                 *command,
@@ -219,7 +225,7 @@ async def run_command_with_file_output(
         stderr = stderr_bytes.decode() if stderr_bytes else ""
 
         result = ProcessResult(
-            returncode=process.returncode,
+            returncode=process.returncode or 0,
             stdout="",  # Redirected to file
             stderr=stderr,
             command=command,
@@ -230,7 +236,9 @@ async def run_command_with_file_output(
             if result.success:
                 console.print(f"[green]{log_desc} completed successfully[/green]")
             else:
-                console.print(f"[red]{log_desc} failed with exit code {result.returncode}[/red]")
+                console.print(
+                    f"[red]{log_desc} failed with exit code {result.returncode}[/red]"
+                )
                 if stderr and len(stderr) < 500:
                     console.print(f"[red]Error: {stderr.strip()}[/red]")
 
@@ -267,6 +275,7 @@ async def run_command_with_file_output(
 
 # Specialized command runners for common tools
 
+
 async def run_git_command(
     *args: str,
     cwd: Optional[Union[str, Path]] = None,
@@ -276,7 +285,8 @@ async def run_git_command(
 ) -> ProcessResult:
     """Run a git command with standard settings."""
     return await run_command(
-        "git", *args,
+        "git",
+        *args,
         cwd=cwd,
         timeout=timeout,
         check=check,
@@ -294,7 +304,8 @@ async def run_extraction_command(
 ) -> ProcessResult:
     """Run an extraction tool command with standard settings."""
     return await run_command(
-        tool, *args,
+        tool,
+        *args,
         cwd=cwd,
         timeout=timeout,
         capture_output=True,
@@ -313,7 +324,8 @@ async def run_download_command(
 ) -> ProcessResult:
     """Run a download command with standard settings."""
     return await run_command(
-        tool, *args,
+        tool,
+        *args,
         cwd=cwd,
         timeout=timeout,
         capture_output=True,
@@ -333,7 +345,8 @@ async def run_analysis_command(
     """Run an analysis tool command."""
     if output_file:
         return await run_command_with_file_output(
-            tool, *args,
+            tool,
+            *args,
             output_file=output_file,
             cwd=cwd,
             timeout=timeout,
@@ -341,7 +354,8 @@ async def run_analysis_command(
         )
     else:
         return await run_command(
-            tool, *args,
+            tool,
+            *args,
             cwd=cwd,
             timeout=timeout,
             capture_output=True,
@@ -360,20 +374,23 @@ class ProcessException(Exception):
 
 # Utility functions for common subprocess patterns
 
+
 def format_file_size(size_bytes: int) -> str:
     """Format file size in human readable format."""
-    for unit in ['B', 'KB', 'MB', 'GB']:
-        if size_bytes < 1024.0:
-            return f"{size_bytes:.1f} {unit}"
-        size_bytes /= 1024.0
-    return f"{size_bytes:.1f} TB"
+    size: float = size_bytes
+    for unit in ["B", "KB", "MB", "GB"]:
+        if size < 1024.0:
+            return f"{size:.1f} {unit}"
+        size /= 1024.0
+    return f"{size:.1f} TB"
 
 
 async def check_tool_available(tool: str) -> bool:
     """Check if a command-line tool is available."""
     try:
         result = await run_command(
-            "which", tool,
+            "which",
+            tool,
             capture_output=True,
             timeout=5.0,
             quiet=True,
@@ -396,7 +413,8 @@ async def find_files_in_directory(
         find_args.extend(["-maxdepth", str(max_depth)])
 
     result = await run_command(
-        "find", *find_args,
+        "find",
+        *find_args,
         cwd=directory,
         timeout=30.0,
         quiet=True,
@@ -404,10 +422,10 @@ async def find_files_in_directory(
 
     if result.success and result.stdout:
         paths = []
-        for line in result.stdout.strip().split('\n'):
+        for line in result.stdout.strip().split("\n"):
             if line.strip():
                 # Convert relative path to absolute
-                abs_path = Path(directory) / line.strip().lstrip('./')
+                abs_path = Path(directory) / line.strip().lstrip("./")
                 paths.append(abs_path)
         return paths
 

@@ -1,13 +1,20 @@
-import os
 import shutil
 from pathlib import Path
-from typing import List, Optional, Tuple
 
 from rich.console import Console
 
+from dumpyarabot.file_utils import (
+    find_files_by_pattern,
+    move_file_to_root,
+    safe_remove_file,
+)
+from dumpyarabot.process_utils import (
+    run_analysis_command,
+    run_command,
+    run_extraction_command,
+    run_git_command,
+)
 from dumpyarabot.schemas import DumpJob
-from dumpyarabot.process_utils import run_command, run_extraction_command, run_git_command, run_analysis_command
-from dumpyarabot.file_utils import find_files_by_pattern, move_file_to_root, safe_remove_file
 
 console = Console()
 
@@ -30,12 +37,16 @@ class FirmwareExtractor:
 
     async def _extract_with_python_dumper(self, firmware_path: str) -> str:
         """Extract using the modern Python dumpyara tool."""
-        result = await run_command(
-            "uvx", "dumpyara", firmware_path, "-o", str(self.work_dir),
+        await run_command(
+            "uvx",
+            "dumpyara",
+            firmware_path,
+            "-o",
+            str(self.work_dir),
             cwd=self.work_dir,
             timeout=600.0,
             check=True,
-            description="Python dumper extraction"
+            description="Python dumper extraction",
         )
 
         return str(self.work_dir)
@@ -49,12 +60,15 @@ class FirmwareExtractor:
 
         # Run the extractor script
         extractor_script = self.firmware_extractor_path / "extractor.sh"
-        result = await run_command(
-            "bash", str(extractor_script), firmware_path, str(self.work_dir),
+        await run_command(
+            "bash",
+            str(extractor_script),
+            firmware_path,
+            str(self.work_dir),
             cwd=self.work_dir,
             timeout=600.0,
             check=True,
-            description="Alternative dumper extraction"
+            description="Alternative dumper extraction",
         )
 
         # Extract individual partitions
@@ -63,31 +77,71 @@ class FirmwareExtractor:
         console.print("[green]Alternative dumper extraction completed[/green]")
         return str(self.work_dir)
 
-    async def _setup_firmware_extractor(self):
+    async def _setup_firmware_extractor(self) -> None:
         """Clone or update the Firmware_extractor repository."""
         if not self.firmware_extractor_path.exists():
             await run_git_command(
-                "clone", "-q",
+                "clone",
+                "-q",
                 "https://github.com/AndroidDumps/Firmware_extractor",
                 str(self.firmware_extractor_path),
-                description="Cloning Firmware_extractor"
+                description="Cloning Firmware_extractor",
             )
         else:
             await run_git_command(
-                "-C", str(self.firmware_extractor_path), "pull", "-q", "--rebase",
-                description="Updating Firmware_extractor"
+                "-C",
+                str(self.firmware_extractor_path),
+                "pull",
+                "-q",
+                "--rebase",
+                description="Updating Firmware_extractor",
             )
 
-    async def _extract_partitions(self):
+    async def _extract_partitions(self) -> None:
         """Extract individual partition images using alternative dumper tools."""
         partitions = [
-            "system", "systemex", "system_ext", "system_other",
-            "vendor", "cust", "odm", "odm_ext", "oem", "factory", "product", "modem",
-            "xrom", "oppo_product", "opproduct", "reserve", "india", "my_preload",
-            "my_odm", "my_stock", "my_operator", "my_country", "my_product", "my_company",
-            "my_engineering", "my_heytap", "my_custom", "my_manifest", "my_carrier", "my_region",
-            "my_bigball", "my_version", "special_preload", "vendor_dlkm", "odm_dlkm", "system_dlkm",
-            "mi_ext", "radio", "product_h", "preas", "preavs", "preload"
+            "system",
+            "systemex",
+            "system_ext",
+            "system_other",
+            "vendor",
+            "cust",
+            "odm",
+            "odm_ext",
+            "oem",
+            "factory",
+            "product",
+            "modem",
+            "xrom",
+            "oppo_product",
+            "opproduct",
+            "reserve",
+            "india",
+            "my_preload",
+            "my_odm",
+            "my_stock",
+            "my_operator",
+            "my_country",
+            "my_product",
+            "my_company",
+            "my_engineering",
+            "my_heytap",
+            "my_custom",
+            "my_manifest",
+            "my_carrier",
+            "my_region",
+            "my_bigball",
+            "my_version",
+            "special_preload",
+            "vendor_dlkm",
+            "odm_dlkm",
+            "system_dlkm",
+            "mi_ext",
+            "radio",
+            "product_h",
+            "preas",
+            "preavs",
+            "preload",
         ]
 
         fsck_erofs = self.firmware_extractor_path / "tools" / "fsck.erofs"
@@ -107,8 +161,10 @@ class FirmwareExtractor:
             # Method 1: fsck.erofs
             if fsck_erofs.exists():
                 result = await run_extraction_command(
-                    str(fsck_erofs), f"--extract={partition_dir}", str(img_file),
-                    description=f"Extracting '{partition}' via fsck.erofs"
+                    str(fsck_erofs),
+                    f"--extract={partition_dir}",
+                    str(img_file),
+                    description=f"Extracting '{partition}' via fsck.erofs",
                 )
                 if result.success:
                     success = True
@@ -116,9 +172,11 @@ class FirmwareExtractor:
             # Method 2: ext2rd
             if not success and ext2rd.exists():
                 result = await run_extraction_command(
-                    str(ext2rd), str(img_file), f"./{partition}",
+                    str(ext2rd),
+                    str(img_file),
+                    f"./{partition}",
                     cwd=self.work_dir,
-                    description=f"Extracting '{partition}' via ext2rd"
+                    description=f"Extracting '{partition}' via ext2rd",
                 )
                 if result.success:
                     success = True
@@ -126,8 +184,13 @@ class FirmwareExtractor:
             # Method 3: 7zip
             if not success:
                 result = await run_extraction_command(
-                    "7zz", "-snld", "x", str(img_file), "-y", f"-o{partition_dir}/",
-                    description=f"Extracting '{partition}' via 7zz"
+                    "7zz",
+                    "-snld",
+                    "x",
+                    str(img_file),
+                    "-y",
+                    f"-o{partition_dir}/",
+                    description=f"Extracting '{partition}' via 7zz",
                 )
                 if result.success:
                     success = True
@@ -140,12 +203,14 @@ class FirmwareExtractor:
                 console.print(f"[yellow]Failed to extract {partition}[/yellow]")
                 # Only abort on first partition failure
                 if partition == partitions[0]:
-                    raise Exception(f"Critical partition extraction failed: {partition}")
+                    raise Exception(
+                        f"Critical partition extraction failed: {partition}"
+                    )
 
         # Extract fsg.mbn from radio.img if present
         await self._extract_fsg_partition()
 
-    async def _extract_fsg_partition(self):
+    async def _extract_fsg_partition(self) -> None:
         """Extract fsg.mbn partition if present."""
         fsg_file = self.work_dir / "fsg.mbn"
         if not fsg_file.exists():
@@ -157,8 +222,12 @@ class FirmwareExtractor:
         fsg_dir.mkdir(parents=True, exist_ok=True)
 
         result = await run_extraction_command(
-            "7zz", "-snld", "x", str(fsg_file), f"-o{fsg_dir}",
-            description="Extracting fsg.mbn via 7zz"
+            "7zz",
+            "-snld",
+            "x",
+            str(fsg_file),
+            f"-o{fsg_dir}",
+            description="Extracting fsg.mbn via 7zz",
         )
 
         if result.success:
@@ -167,11 +236,19 @@ class FirmwareExtractor:
 
     async def process_boot_images(self) -> None:
         """Process boot images (boot.img, vendor_boot.img, etc.)."""
-        boot_images = ["init_boot.img", "vendor_kernel_boot.img", "vendor_boot.img", "boot.img", "dtbo.img"]
+        boot_images = [
+            "init_boot.img",
+            "vendor_kernel_boot.img",
+            "vendor_boot.img",
+            "boot.img",
+            "dtbo.img",
+        ]
 
         # Move boot images to work directory root if they're in subdirectories
         for image_name in boot_images:
-            found_images = find_files_by_pattern(self.work_dir, [image_name], recursive=True)
+            found_images = find_files_by_pattern(
+                self.work_dir, [image_name], recursive=True
+            )
             if found_images and not (self.work_dir / image_name).exists():
                 move_file_to_root(found_images[0], self.work_dir)
 
@@ -184,7 +261,7 @@ class FirmwareExtractor:
         # Process Oppo/Realme/OnePlus images in special directories
         await self._process_oppo_images()
 
-    async def _process_single_boot_image(self, image_path: Path):
+    async def _process_single_boot_image(self, image_path: Path) -> None:
         """Process a single boot image file."""
         image_name = image_path.name
         output_dir = self.work_dir / image_path.stem
@@ -193,12 +270,16 @@ class FirmwareExtractor:
 
         if image_name == "boot.img":
             await self._process_boot_img(image_path, output_dir)
-        elif image_name in ["vendor_boot.img", "vendor_kernel_boot.img", "init_boot.img"]:
+        elif image_name in [
+            "vendor_boot.img",
+            "vendor_kernel_boot.img",
+            "init_boot.img",
+        ]:
             await self._process_vendor_boot_img(image_path, output_dir)
         elif image_name == "dtbo.img":
             await self._process_dtbo_img(image_path, output_dir)
 
-    async def _process_boot_img(self, image_path: Path, output_dir: Path):
+    async def _process_boot_img(self, image_path: Path, output_dir: Path) -> None:
         """Process boot.img with comprehensive analysis."""
         output_dir.mkdir(exist_ok=True)
 
@@ -218,7 +299,7 @@ class FirmwareExtractor:
         # Extract and process device tree blobs
         await self._extract_device_trees(image_path, output_dir)
 
-    async def _process_vendor_boot_img(self, image_path: Path, output_dir: Path):
+    async def _process_vendor_boot_img(self, image_path: Path, output_dir: Path) -> None:
         """Process vendor_boot.img or similar images."""
         output_dir.mkdir(exist_ok=True)
 
@@ -229,14 +310,14 @@ class FirmwareExtractor:
         # Extract device tree blobs
         await self._extract_device_trees(image_path, output_dir)
 
-    async def _process_dtbo_img(self, image_path: Path, output_dir: Path):
+    async def _process_dtbo_img(self, image_path: Path, output_dir: Path) -> None:
         """Process dtbo.img."""
         output_dir.mkdir(exist_ok=True)
 
         # Extract device tree overlays
         await self._extract_device_trees(image_path, output_dir, is_dtbo=True)
 
-    async def _unpack_boot_image(self, image_path: Path, output_dir: Path):
+    async def _unpack_boot_image(self, image_path: Path, output_dir: Path) -> None:
         """Unpack boot image using unpackbootimg."""
         unpackbootimg = self.firmware_extractor_path / "tools" / "unpackbootimg"
         if not unpackbootimg.exists():
@@ -246,14 +327,18 @@ class FirmwareExtractor:
         ramdisk_dir.mkdir(exist_ok=True)
 
         await run_extraction_command(
-            str(unpackbootimg), "-i", str(image_path), "-o", str(output_dir),
-            description=f"Unpacking {image_path.name}"
+            str(unpackbootimg),
+            "-i",
+            str(image_path),
+            "-o",
+            str(output_dir),
+            description=f"Unpacking {image_path.name}",
         )
 
         # Extract ramdisk if present
         await self._extract_ramdisk(output_dir, ramdisk_dir)
 
-    async def _extract_ramdisk(self, output_dir: Path, ramdisk_dir: Path):
+    async def _extract_ramdisk(self, output_dir: Path, ramdisk_dir: Path) -> None:
         """Extract ramdisk from boot image."""
         ramdisk_files = list(output_dir.glob("*-ramdisk*"))
         if not ramdisk_files:
@@ -263,8 +348,7 @@ class FirmwareExtractor:
 
         # Check if it's compressed
         result = await run_analysis_command(
-            "file", str(ramdisk_file),
-            description="Checking ramdisk compression"
+            "file", str(ramdisk_file), description="Checking ramdisk compression"
         )
 
         if not result.success:
@@ -278,27 +362,34 @@ class FirmwareExtractor:
             # Decompress with unlz4
             temp_ramdisk = output_dir / "ramdisk.lz4"
             decompress_result = await run_extraction_command(
-                "unlz4", str(ramdisk_file), str(temp_ramdisk),
-                description="Decompressing ramdisk"
+                "unlz4",
+                str(ramdisk_file),
+                str(temp_ramdisk),
+                description="Decompressing ramdisk",
             )
 
             if decompress_result.success and temp_ramdisk.exists():
                 # Extract with 7zip
                 await run_extraction_command(
-                    "7zz", "-snld", "x", str(temp_ramdisk), f"-o{ramdisk_dir}",
-                    description="Extracting ramdisk archive"
+                    "7zz",
+                    "-snld",
+                    "x",
+                    str(temp_ramdisk),
+                    f"-o{ramdisk_dir}",
+                    description="Extracting ramdisk archive",
                 )
                 safe_remove_file(temp_ramdisk)
 
-    async def _extract_ikconfig(self, image_path: Path):
+    async def _extract_ikconfig(self, image_path: Path) -> None:
         """Extract kernel configuration."""
         ikconfig_path = self.work_dir / "ikconfig"
 
         try:
             result = await run_analysis_command(
-                "extract-ikconfig", str(image_path),
+                "extract-ikconfig",
+                str(image_path),
                 output_file=ikconfig_path,
-                description="Extracting ikconfig"
+                description="Extracting ikconfig",
             )
 
             if result.success and ikconfig_path.exists():
@@ -307,21 +398,26 @@ class FirmwareExtractor:
                 console.print("[yellow]Failed to extract ikconfig[/yellow]")
                 safe_remove_file(ikconfig_path)
         except FileNotFoundError:
-            console.print("[yellow]extract-ikconfig tool not found, skipping ikconfig extraction[/yellow]")
+            console.print(
+                "[yellow]extract-ikconfig tool not found, skipping ikconfig extraction[/yellow]"
+            )
         except Exception as e:
             console.print(f"[yellow]Error extracting ikconfig: {e}[/yellow]")
             safe_remove_file(ikconfig_path)
 
-    async def _extract_kallsyms(self, image_path: Path):
+    async def _extract_kallsyms(self, image_path: Path) -> None:
         """Extract kernel symbols."""
         kallsyms_path = self.work_dir / "kallsyms.txt"
 
         try:
             result = await run_analysis_command(
-                "uvx", "--from", "git+https://github.com/marin-m/vmlinux-to-elf@master",
-                "kallsyms-finder", str(image_path),
+                "uvx",
+                "--from",
+                "git+https://github.com/marin-m/vmlinux-to-elf@master",
+                "kallsyms-finder",
+                str(image_path),
                 output_file=kallsyms_path,
-                description="Generating kallsyms.txt"
+                description="Generating kallsyms.txt",
             )
 
             if result.success and kallsyms_path.exists():
@@ -330,20 +426,26 @@ class FirmwareExtractor:
                 console.print("[yellow]Failed to generate kallsyms.txt[/yellow]")
                 safe_remove_file(kallsyms_path)
         except FileNotFoundError:
-            console.print("[yellow]uvx or kallsyms-finder tool not found, skipping kallsyms extraction[/yellow]")
+            console.print(
+                "[yellow]uvx or kallsyms-finder tool not found, skipping kallsyms extraction[/yellow]"
+            )
         except Exception as e:
             console.print(f"[yellow]Error extracting kallsyms: {e}[/yellow]")
             safe_remove_file(kallsyms_path)
 
-    async def _extract_boot_elf(self, image_path: Path):
+    async def _extract_boot_elf(self, image_path: Path) -> None:
         """Extract analyzable ELF file."""
         elf_path = self.work_dir / "boot.elf"
 
         try:
             result = await run_analysis_command(
-                "uvx", "--from", "git+https://github.com/marin-m/vmlinux-to-elf@master",
-                "vmlinux-to-elf", str(image_path), str(elf_path),
-                description="Extracting boot.elf"
+                "uvx",
+                "--from",
+                "git+https://github.com/marin-m/vmlinux-to-elf@master",
+                "vmlinux-to-elf",
+                str(image_path),
+                str(elf_path),
+                description="Extracting boot.elf",
             )
 
             if result.success and elf_path.exists():
@@ -351,11 +453,15 @@ class FirmwareExtractor:
             else:
                 console.print("[yellow]Failed to extract boot.elf[/yellow]")
         except FileNotFoundError:
-            console.print("[yellow]uvx or vmlinux-to-elf tool not found, skipping ELF extraction[/yellow]")
+            console.print(
+                "[yellow]uvx or vmlinux-to-elf tool not found, skipping ELF extraction[/yellow]"
+            )
         except Exception as e:
             console.print(f"[yellow]Error extracting boot ELF: {e}[/yellow]")
 
-    async def _extract_device_trees(self, image_path: Path, output_dir: Path, is_dtbo: bool = False):
+    async def _extract_device_trees(
+        self, image_path: Path, output_dir: Path, is_dtbo: bool = False
+    ) -> None:
         """Extract and decompile device tree blobs."""
         if is_dtbo:
             dtb_dir = output_dir
@@ -367,20 +473,27 @@ class FirmwareExtractor:
         dtb_dir.mkdir(exist_ok=True)
         dts_dir.mkdir(exist_ok=True)
 
-        console.print(f"[blue]{image_path.name}: Extracting device-tree blobs...[/blue]")
+        console.print(
+            f"[blue]{image_path.name}: Extracting device-tree blobs...[/blue]"
+        )
 
         # Extract DTBs
         try:
             result = await run_extraction_command(
-                "extract-dtb", str(image_path), "-o", str(dtb_dir),
-                description=f"{image_path.name}: Extracting device-tree blobs"
+                "extract-dtb",
+                str(image_path),
+                "-o",
+                str(dtb_dir),
+                description=f"{image_path.name}: Extracting device-tree blobs",
             )
 
             if not result.success:
                 console.print("[yellow]No device-tree blobs found[/yellow]")
                 return
         except FileNotFoundError:
-            console.print("[yellow]extract-dtb tool not found, skipping device tree extraction[/yellow]")
+            console.print(
+                "[yellow]extract-dtb tool not found, skipping device tree extraction[/yellow]"
+            )
             return
         except Exception as e:
             console.print(f"[yellow]Error extracting device trees: {e}[/yellow]")
@@ -401,23 +514,35 @@ class FirmwareExtractor:
 
                 try:
                     result = await run_analysis_command(
-                        "dtc", "-q", "-I", "dtb", "-O", "dts", str(dtb_file),
+                        "dtc",
+                        "-q",
+                        "-I",
+                        "dtb",
+                        "-O",
+                        "dts",
+                        str(dtb_file),
                         output_file=dts_file,
-                        description=f"Decompiling {dtb_file.name}"
+                        description=f"Decompiling {dtb_file.name}",
                     )
 
                     if result.success:
                         console.print(f"[green]Decompiled {dtb_file.name}[/green]")
                     else:
-                        console.print(f"[yellow]Failed to decompile {dtb_file.name}[/yellow]")
+                        console.print(
+                            f"[yellow]Failed to decompile {dtb_file.name}[/yellow]"
+                        )
                         safe_remove_file(dts_file)
                 except FileNotFoundError:
-                    console.print(f"[yellow]dtc tool not found, skipping decompilation of {dtb_file.name}[/yellow]")
+                    console.print(
+                        f"[yellow]dtc tool not found, skipping decompilation of {dtb_file.name}[/yellow]"
+                    )
                 except Exception as e:
-                    console.print(f"[yellow]Error decompiling {dtb_file.name}: {e}[/yellow]")
+                    console.print(
+                        f"[yellow]Error decompiling {dtb_file.name}: {e}[/yellow]"
+                    )
                     safe_remove_file(dts_file)
 
-    async def _process_oppo_images(self):
+    async def _process_oppo_images(self) -> None:
         """Process Oppo/Realme/OnePlus images in special directories."""
         special_dirs = ["vendor/euclid", "system/system/euclid", "reserve/reserve"]
 
@@ -438,8 +563,12 @@ class FirmwareExtractor:
                 extract_dir.mkdir(exist_ok=True)
 
                 result = await run_extraction_command(
-                    "7zz", "-snld", "x", str(img_file), f"-o{extract_dir}",
-                    description=f"Extracting {img_file.name}"
+                    "7zz",
+                    "-snld",
+                    "x",
+                    str(img_file),
+                    f"-o{extract_dir}",
+                    description=f"Extracting {img_file.name}",
                 )
 
                 if result.success:
@@ -447,4 +576,3 @@ class FirmwareExtractor:
                     console.print(f"[green]Extracted {img_file.name}[/green]")
                 else:
                     console.print(f"[yellow]Failed to extract {img_file.name}[/yellow]")
-

@@ -1,10 +1,18 @@
 """
 Unit tests for dumpyarabot handlers.
 """
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from dumpyarabot.handlers import dump, cancel_dump, status, blacklist, help_command, restart
+import pytest
+
+from dumpyarabot.handlers import (
+    blacklist,
+    cancel_dump,
+    dump,
+    help_command,
+    restart,
+    status,
+)
 
 
 @pytest.mark.unit
@@ -12,26 +20,38 @@ class TestDumpHandler:
     """Test cases for the /dump command handler."""
 
     @pytest.mark.asyncio
-    async def test_dump_command_valid_url(self, test_config, mock_telegram_update, mock_telegram_bot):
+    async def test_dump_command_valid_url(
+        self, test_config, mock_telegram_update, mock_telegram_bot
+    ):
         """Test /dump command with valid URL."""
         context = MagicMock()
         context.args = ["https://example.com/firmware.zip"]
         context.bot = mock_telegram_bot
 
         # Mock dependencies - use proper module path
-        with patch('dumpyarabot.handlers.settings') as mock_settings, \
-             patch('dumpyarabot.handlers.message_queue') as mock_queue, \
-             patch('dumpyarabot.handlers.url_utils.validate_and_normalize_url') as mock_validate, \
-             patch('dumpyarabot.handlers.secrets.token_hex') as mock_token:
-
+        with patch("dumpyarabot.handlers.settings") as mock_settings, patch(
+            "dumpyarabot.handlers.message_queue"
+        ) as mock_queue, patch(
+            "dumpyarabot.handlers.url_utils.validate_and_normalize_url"
+        ) as mock_validate, patch(
+            "dumpyarabot.handlers.secrets.token_hex"
+        ) as mock_token:
             # Setup settings mock
             chat_id = mock_telegram_update.effective_chat.id
             mock_settings.ALLOWED_CHATS = [chat_id]
 
             # Setup other mocks
-            mock_validate.return_value = (True, "https://example.com/firmware.zip", None)
-            mock_queue.send_immediate_message = AsyncMock(return_value=MagicMock(message_id=123))
-            mock_queue.queue_dump_job_with_metadata = AsyncMock(return_value="test_job_123")
+            mock_validate.return_value = (
+                True,
+                "https://example.com/firmware.zip",
+                None,
+            )
+            mock_queue.send_immediate_message = AsyncMock(
+                return_value=MagicMock(message_id=123)
+            )
+            mock_queue.queue_dump_job_with_metadata = AsyncMock(
+                return_value="test_job_123"
+            )
             mock_token.return_value = "testjob123"
 
             await dump(mock_telegram_update, context)
@@ -42,26 +62,31 @@ class TestDumpHandler:
             # Verify immediate message was sent
             mock_queue.send_immediate_message.assert_called_once()
             call_args = mock_queue.send_immediate_message.call_args
-            assert call_args[1]['chat_id'] == chat_id
-            assert 'Firmware Dump Queued' in call_args[1]['text']
+            assert call_args[1]["chat_id"] == chat_id
+            assert "Firmware Dump Queued" in call_args[1]["text"]
 
             # Verify job was queued
             mock_queue.queue_dump_job_with_metadata.assert_called_once()
             job_data = mock_queue.queue_dump_job_with_metadata.call_args[0][0]
 
-            assert str(job_data["dump_args"]["url"]) == "https://example.com/firmware.zip"
+            assert (
+                str(job_data["dump_args"]["url"]) == "https://example.com/firmware.zip"
+            )
             assert job_data["job_id"] == "testjob123"
             assert "metadata" in job_data
 
     @pytest.mark.asyncio
-    async def test_dump_command_unauthorized_chat(self, test_config, mock_telegram_update, mock_telegram_bot):
+    async def test_dump_command_unauthorized_chat(
+        self, test_config, mock_telegram_update, mock_telegram_bot
+    ):
         """Test /dump command from unauthorized chat."""
         context = MagicMock()
         context.args = ["https://example.com/firmware.zip"]
         context.bot = mock_telegram_bot
 
-        with patch('dumpyarabot.handlers.settings') as mock_settings, \
-             patch('dumpyarabot.handlers.message_queue') as mock_queue:
+        with patch("dumpyarabot.handlers.settings") as mock_settings, patch(
+            "dumpyarabot.handlers.message_queue"
+        ) as mock_queue:
             # Chat ID not in allowed chats
             mock_settings.ALLOWED_CHATS = [999999]  # Different from update's chat ID
 
@@ -72,15 +97,17 @@ class TestDumpHandler:
             mock_queue.queue_dump_job_with_metadata.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_dump_command_no_args(self, test_config, mock_telegram_update, mock_telegram_bot):
+    async def test_dump_command_no_args(
+        self, test_config, mock_telegram_update, mock_telegram_bot
+    ):
         """Test /dump command with no arguments."""
         context = MagicMock()
         context.args = []
         context.bot = mock_telegram_bot
 
-        with patch('dumpyarabot.handlers.settings') as mock_settings, \
-             patch('dumpyarabot.handlers.message_queue') as mock_queue:
-
+        with patch("dumpyarabot.handlers.settings") as mock_settings, patch(
+            "dumpyarabot.handlers.message_queue"
+        ) as mock_queue:
             mock_settings.ALLOWED_CHATS = [mock_telegram_update.effective_chat.id]
             mock_queue.send_reply = AsyncMock()
 
@@ -93,16 +120,19 @@ class TestDumpHandler:
             assert "URL: required" in call_args[1]["text"]
 
     @pytest.mark.asyncio
-    async def test_dump_command_invalid_url(self, test_config, mock_telegram_update, mock_telegram_bot):
+    async def test_dump_command_invalid_url(
+        self, test_config, mock_telegram_update, mock_telegram_bot
+    ):
         """Test /dump command with invalid URL."""
         context = MagicMock()
         context.args = ["not-a-valid-url"]
         context.bot = mock_telegram_bot
 
-        with patch('dumpyarabot.handlers.settings') as mock_settings, \
-             patch('dumpyarabot.handlers.message_queue') as mock_queue, \
-             patch('dumpyarabot.handlers.url_utils.validate_and_normalize_url') as mock_validate:
-
+        with patch("dumpyarabot.handlers.settings") as mock_settings, patch(
+            "dumpyarabot.handlers.message_queue"
+        ) as mock_queue, patch(
+            "dumpyarabot.handlers.url_utils.validate_and_normalize_url"
+        ) as mock_validate:
             mock_settings.ALLOWED_CHATS = [mock_telegram_update.effective_chat.id]
             mock_validate.return_value = (False, None, "Invalid URL format")
             mock_queue.send_reply = AsyncMock()
@@ -116,21 +146,33 @@ class TestDumpHandler:
             assert "Error" in call_args[1]["text"] or "Invalid" in call_args[1]["text"]
 
     @pytest.mark.asyncio
-    async def test_dump_command_with_options(self, test_config, mock_telegram_update, mock_telegram_bot):
+    async def test_dump_command_with_options(
+        self, test_config, mock_telegram_update, mock_telegram_bot
+    ):
         """Test /dump command with various options."""
         context = MagicMock()
         context.args = ["https://example.com/firmware.zip", "afp"]
         context.bot = mock_telegram_bot
 
-        with patch('dumpyarabot.handlers.settings') as mock_settings, \
-             patch('dumpyarabot.handlers.message_queue') as mock_queue, \
-             patch('dumpyarabot.handlers.url_utils.validate_and_normalize_url') as mock_validate, \
-             patch('dumpyarabot.handlers.secrets.token_hex') as mock_token:
-
+        with patch("dumpyarabot.handlers.settings") as mock_settings, patch(
+            "dumpyarabot.handlers.message_queue"
+        ) as mock_queue, patch(
+            "dumpyarabot.handlers.url_utils.validate_and_normalize_url"
+        ) as mock_validate, patch(
+            "dumpyarabot.handlers.secrets.token_hex"
+        ) as mock_token:
             mock_settings.ALLOWED_CHATS = [mock_telegram_update.effective_chat.id]
-            mock_validate.return_value = (True, "https://example.com/firmware.zip", None)
-            mock_queue.send_immediate_message = AsyncMock(return_value=MagicMock(message_id=123))
-            mock_queue.queue_dump_job_with_metadata = AsyncMock(return_value="test_job_123")
+            mock_validate.return_value = (
+                True,
+                "https://example.com/firmware.zip",
+                None,
+            )
+            mock_queue.send_immediate_message = AsyncMock(
+                return_value=MagicMock(message_id=123)
+            )
+            mock_queue.queue_dump_job_with_metadata = AsyncMock(
+                return_value="test_job_123"
+            )
             mock_token.return_value = "testjob123"
 
             await dump(mock_telegram_update, context)
@@ -142,21 +184,33 @@ class TestDumpHandler:
             # Note: 'f' option affects force behavior but isn't stored in dump_args
 
     @pytest.mark.asyncio
-    async def test_dump_command_privdump_deletes_message(self, test_config, mock_telegram_update, mock_telegram_bot):
+    async def test_dump_command_privdump_deletes_message(
+        self, test_config, mock_telegram_update, mock_telegram_bot
+    ):
         """Test /dump command with privdump option deletes original message."""
         context = MagicMock()
         context.args = ["https://example.com/firmware.zip", "p"]
         context.bot = mock_telegram_bot
 
-        with patch('dumpyarabot.handlers.settings') as mock_settings, \
-             patch('dumpyarabot.handlers.message_queue') as mock_queue, \
-             patch('dumpyarabot.handlers.url_utils.validate_and_normalize_url') as mock_validate, \
-             patch('dumpyarabot.handlers.secrets.token_hex') as mock_token:
-
+        with patch("dumpyarabot.handlers.settings") as mock_settings, patch(
+            "dumpyarabot.handlers.message_queue"
+        ) as mock_queue, patch(
+            "dumpyarabot.handlers.url_utils.validate_and_normalize_url"
+        ) as mock_validate, patch(
+            "dumpyarabot.handlers.secrets.token_hex"
+        ) as mock_token:
             mock_settings.ALLOWED_CHATS = [mock_telegram_update.effective_chat.id]
-            mock_validate.return_value = (True, "https://example.com/firmware.zip", None)
-            mock_queue.send_immediate_message = AsyncMock(return_value=MagicMock(message_id=123))
-            mock_queue.queue_dump_job_with_metadata = AsyncMock(return_value="test_job_123")
+            mock_validate.return_value = (
+                True,
+                "https://example.com/firmware.zip",
+                None,
+            )
+            mock_queue.send_immediate_message = AsyncMock(
+                return_value=MagicMock(message_id=123)
+            )
+            mock_queue.queue_dump_job_with_metadata = AsyncMock(
+                return_value="test_job_123"
+            )
             mock_token.return_value = "testjob123"
 
             await dump(mock_telegram_update, context)
@@ -164,7 +218,7 @@ class TestDumpHandler:
             # Should attempt to delete original message
             mock_telegram_bot.delete_message.assert_called_once_with(
                 chat_id=mock_telegram_update.effective_chat.id,
-                message_id=mock_telegram_update.effective_message.message_id
+                message_id=mock_telegram_update.effective_message.message_id,
             )
 
             # Should not reply to deleted message
@@ -177,16 +231,19 @@ class TestCancelHandler:
     """Test cases for the /cancel command handler."""
 
     @pytest.mark.asyncio
-    async def test_cancel_command_valid_job_id(self, test_config, mock_telegram_update, mock_telegram_bot):
+    async def test_cancel_command_valid_job_id(
+        self, test_config, mock_telegram_update, mock_telegram_bot
+    ):
         """Test /cancel command with valid job ID."""
         context = MagicMock()
         context.args = ["abc123"]
         context.bot = mock_telegram_bot
 
-        with patch('dumpyarabot.handlers.settings') as mock_settings, \
-             patch('dumpyarabot.handlers.message_queue') as mock_queue, \
-             patch('dumpyarabot.handlers.check_admin_permissions') as mock_admin:
-
+        with patch("dumpyarabot.handlers.settings") as mock_settings, patch(
+            "dumpyarabot.handlers.message_queue"
+        ) as mock_queue, patch(
+            "dumpyarabot.handlers.check_admin_permissions"
+        ) as mock_admin:
             mock_settings.ALLOWED_CHATS = [mock_telegram_update.effective_chat.id]
             mock_admin.return_value = (True, None)  # User is admin
             mock_queue.cancel_job = AsyncMock(return_value=True)
@@ -203,16 +260,19 @@ class TestCancelHandler:
             assert "Job cancelled successfully" in call_args[1]["text"]
 
     @pytest.mark.asyncio
-    async def test_cancel_command_non_admin(self, test_config, mock_telegram_update, mock_telegram_bot):
+    async def test_cancel_command_non_admin(
+        self, test_config, mock_telegram_update, mock_telegram_bot
+    ):
         """Test /cancel command from non-admin user."""
         context = MagicMock()
         context.args = ["abc123"]
         context.bot = mock_telegram_bot
 
-        with patch('dumpyarabot.handlers.settings') as mock_settings, \
-             patch('dumpyarabot.handlers.message_queue') as mock_queue, \
-             patch('dumpyarabot.handlers.check_admin_permissions') as mock_admin:
-
+        with patch("dumpyarabot.handlers.settings") as mock_settings, patch(
+            "dumpyarabot.handlers.message_queue"
+        ) as mock_queue, patch(
+            "dumpyarabot.handlers.check_admin_permissions"
+        ) as mock_admin:
             mock_settings.ALLOWED_CHATS = [mock_telegram_update.effective_chat.id]
             mock_admin.return_value = (False, "Not an admin")
             mock_queue.send_error = AsyncMock()
@@ -225,16 +285,19 @@ class TestCancelHandler:
             assert "don't have permission" in call_args[1]["text"]
 
     @pytest.mark.asyncio
-    async def test_cancel_command_job_not_found(self, test_config, mock_telegram_update, mock_telegram_bot):
+    async def test_cancel_command_job_not_found(
+        self, test_config, mock_telegram_update, mock_telegram_bot
+    ):
         """Test /cancel command when job is not found."""
         context = MagicMock()
         context.args = ["nonexistent"]
         context.bot = mock_telegram_bot
 
-        with patch('dumpyarabot.handlers.settings') as mock_settings, \
-             patch('dumpyarabot.handlers.message_queue') as mock_queue, \
-             patch('dumpyarabot.handlers.check_admin_permissions') as mock_admin:
-
+        with patch("dumpyarabot.handlers.settings") as mock_settings, patch(
+            "dumpyarabot.handlers.message_queue"
+        ) as mock_queue, patch(
+            "dumpyarabot.handlers.check_admin_permissions"
+        ) as mock_admin:
             mock_settings.ALLOWED_CHATS = [mock_telegram_update.effective_chat.id]
             mock_admin.return_value = (True, None)
             mock_queue.cancel_job = AsyncMock(return_value=False)
@@ -253,16 +316,19 @@ class TestStatusHandler:
     """Test cases for the /status command handler."""
 
     @pytest.mark.asyncio
-    async def test_status_command_no_args(self, test_config, mock_telegram_update, mock_telegram_bot):
+    async def test_status_command_no_args(
+        self, test_config, mock_telegram_update, mock_telegram_bot
+    ):
         """Test /status command without arguments (overview)."""
         context = MagicMock()
         context.args = []
         context.bot = mock_telegram_bot
 
-        with patch('dumpyarabot.handlers.settings') as mock_settings, \
-             patch('dumpyarabot.handlers.message_queue') as mock_queue, \
-             patch('dumpyarabot.message_formatting.format_jobs_overview') as mock_format:
-
+        with patch("dumpyarabot.handlers.settings") as mock_settings, patch(
+            "dumpyarabot.handlers.message_queue"
+        ) as mock_queue, patch(
+            "dumpyarabot.message_formatting.format_jobs_overview"
+        ) as mock_format:
             mock_settings.ALLOWED_CHATS = [mock_telegram_update.effective_chat.id]
             mock_queue.get_active_jobs_with_metadata = AsyncMock(return_value=[])
             mock_queue.get_recent_jobs_with_metadata = AsyncMock(return_value=[])
@@ -277,7 +343,9 @@ class TestStatusHandler:
             mock_format.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_status_command_with_job_id(self, test_config, mock_telegram_update, mock_telegram_bot):
+    async def test_status_command_with_job_id(
+        self, test_config, mock_telegram_update, mock_telegram_bot
+    ):
         """Test /status command with specific job ID."""
         context = MagicMock()
         context.args = ["abc123"]
@@ -285,10 +353,11 @@ class TestStatusHandler:
 
         mock_job = MagicMock()
 
-        with patch('dumpyarabot.handlers.settings') as mock_settings, \
-             patch('dumpyarabot.handlers.message_queue') as mock_queue, \
-             patch('dumpyarabot.message_formatting.format_enhanced_job_status') as mock_format:
-
+        with patch("dumpyarabot.handlers.settings") as mock_settings, patch(
+            "dumpyarabot.handlers.message_queue"
+        ) as mock_queue, patch(
+            "dumpyarabot.message_formatting.format_enhanced_job_status"
+        ) as mock_format:
             mock_settings.ALLOWED_CHATS = [mock_telegram_update.effective_chat.id]
             mock_queue.get_job_status = AsyncMock(return_value=mock_job)
             mock_queue.send_reply = AsyncMock()
@@ -301,15 +370,17 @@ class TestStatusHandler:
             mock_format.assert_called_once_with(mock_job)
 
     @pytest.mark.asyncio
-    async def test_status_command_job_not_found(self, test_config, mock_telegram_update, mock_telegram_bot):
+    async def test_status_command_job_not_found(
+        self, test_config, mock_telegram_update, mock_telegram_bot
+    ):
         """Test /status command when job is not found."""
         context = MagicMock()
         context.args = ["nonexistent"]
         context.bot = mock_telegram_bot
 
-        with patch('dumpyarabot.handlers.settings') as mock_settings, \
-             patch('dumpyarabot.handlers.message_queue') as mock_queue:
-
+        with patch("dumpyarabot.handlers.settings") as mock_settings, patch(
+            "dumpyarabot.handlers.message_queue"
+        ) as mock_queue:
             mock_settings.ALLOWED_CHATS = [mock_telegram_update.effective_chat.id]
             mock_queue.get_job_status = AsyncMock(return_value=None)
             mock_queue.send_reply = AsyncMock()
@@ -327,18 +398,21 @@ class TestBlacklistHandler:
     """Test cases for the /blacklist command handler."""
 
     @pytest.mark.asyncio
-    async def test_blacklist_command_valid_url(self, test_config, mock_telegram_update, mock_telegram_bot):
+    async def test_blacklist_command_valid_url(
+        self, test_config, mock_telegram_update, mock_telegram_bot
+    ):
         """Test /blacklist command with valid URL."""
         context = MagicMock()
         context.args = ["https://example.com/firmware.zip"]
         context.bot = mock_telegram_bot
 
-        with patch('dumpyarabot.handlers.settings') as mock_settings, \
-             patch('dumpyarabot.handlers.message_queue') as mock_queue, \
-             patch('dumpyarabot.handlers.secrets.token_hex') as mock_token:
-
+        with patch("dumpyarabot.handlers.settings") as mock_settings, patch(
+            "dumpyarabot.handlers.message_queue"
+        ) as mock_queue, patch("dumpyarabot.handlers.secrets.token_hex") as mock_token:
             mock_settings.ALLOWED_CHATS = [mock_telegram_update.effective_chat.id]
-            mock_queue.queue_dump_job_with_metadata = AsyncMock(return_value="blacklist_job_123")
+            mock_queue.queue_dump_job_with_metadata = AsyncMock(
+                return_value="blacklist_job_123"
+            )
             mock_queue.send_reply = AsyncMock()
             mock_token.return_value = "testjob123"
 
@@ -348,20 +422,27 @@ class TestBlacklistHandler:
             mock_queue.queue_dump_job_with_metadata.assert_called_once()
             job_data = mock_queue.queue_dump_job_with_metadata.call_args[0][0]
 
-            assert str(job_data["dump_args"]["url"]) == "https://example.com/firmware.zip"
+            assert (
+                str(job_data["dump_args"]["url"]) == "https://example.com/firmware.zip"
+            )
             assert job_data["add_blacklist"] is True
-            assert job_data["metadata"]["telegram_context"]["url"] == "https://example.com/firmware.zip"
+            assert (
+                job_data["metadata"]["telegram_context"]["url"]
+                == "https://example.com/firmware.zip"
+            )
 
     @pytest.mark.asyncio
-    async def test_blacklist_command_no_args(self, test_config, mock_telegram_update, mock_telegram_bot):
+    async def test_blacklist_command_no_args(
+        self, test_config, mock_telegram_update, mock_telegram_bot
+    ):
         """Test /blacklist command with no arguments."""
         context = MagicMock()
         context.args = []
         context.bot = mock_telegram_bot
 
-        with patch('dumpyarabot.handlers.settings') as mock_settings, \
-             patch('dumpyarabot.handlers.message_queue') as mock_queue:
-
+        with patch("dumpyarabot.handlers.settings") as mock_settings, patch(
+            "dumpyarabot.handlers.message_queue"
+        ) as mock_queue:
             mock_settings.ALLOWED_CHATS = [mock_telegram_update.effective_chat.id]
             mock_queue.send_reply = AsyncMock()
 
@@ -379,24 +460,30 @@ class TestHelpHandler:
     """Test cases for the /help command handler."""
 
     @pytest.mark.asyncio
-    async def test_help_command_admin_user(self, test_config, mock_telegram_update, mock_telegram_bot):
+    async def test_help_command_admin_user(
+        self, test_config, mock_telegram_update, mock_telegram_bot
+    ):
         """Test /help command for admin user."""
         context = MagicMock()
         context.bot = mock_telegram_bot
 
-        with patch('dumpyarabot.handlers.settings') as mock_settings, \
-             patch('dumpyarabot.handlers.message_queue') as mock_queue, \
-             patch('dumpyarabot.handlers.check_admin_permissions') as mock_admin:
-
+        with patch("dumpyarabot.handlers.settings") as mock_settings, patch(
+            "dumpyarabot.handlers.message_queue"
+        ) as mock_queue, patch(
+            "dumpyarabot.handlers.check_admin_permissions"
+        ) as mock_admin:
             mock_settings.ALLOWED_CHATS = [mock_telegram_update.effective_chat.id]
             mock_admin.return_value = (True, None)  # User is admin
             mock_queue.send_reply = AsyncMock()
 
             # Mock config constants
-            with patch('dumpyarabot.config.USER_COMMANDS', [('dump', 'Dump firmware')]), \
-                 patch('dumpyarabot.config.INTERNAL_COMMANDS', [('status', 'Check status')]), \
-                 patch('dumpyarabot.config.ADMIN_COMMANDS', [('cancel', 'Cancel job')]):
-
+            with patch(
+                "dumpyarabot.config.USER_COMMANDS", [("dump", "Dump firmware")]
+            ), patch(
+                "dumpyarabot.config.INTERNAL_COMMANDS", [("status", "Check status")]
+            ), patch(
+                "dumpyarabot.config.ADMIN_COMMANDS", [("cancel", "Cancel job")]
+            ):
                 await help_command(mock_telegram_update, context)
 
                 # Should send help message with admin commands
@@ -409,24 +496,30 @@ class TestHelpHandler:
                 assert "/cancel" in help_text
 
     @pytest.mark.asyncio
-    async def test_help_command_regular_user(self, test_config, mock_telegram_update, mock_telegram_bot):
+    async def test_help_command_regular_user(
+        self, test_config, mock_telegram_update, mock_telegram_bot
+    ):
         """Test /help command for regular user."""
         context = MagicMock()
         context.bot = mock_telegram_bot
 
-        with patch('dumpyarabot.handlers.settings') as mock_settings, \
-             patch('dumpyarabot.handlers.message_queue') as mock_queue, \
-             patch('dumpyarabot.handlers.check_admin_permissions') as mock_admin:
-
+        with patch("dumpyarabot.handlers.settings") as mock_settings, patch(
+            "dumpyarabot.handlers.message_queue"
+        ) as mock_queue, patch(
+            "dumpyarabot.handlers.check_admin_permissions"
+        ) as mock_admin:
             mock_settings.ALLOWED_CHATS = [mock_telegram_update.effective_chat.id]
             mock_admin.return_value = (False, "Not admin")  # User is not admin
             mock_queue.send_reply = AsyncMock()
 
             # Mock config constants
-            with patch('dumpyarabot.config.USER_COMMANDS', [('dump', 'Dump firmware')]), \
-                 patch('dumpyarabot.config.INTERNAL_COMMANDS', [('status', 'Check status')]), \
-                 patch('dumpyarabot.config.ADMIN_COMMANDS', [('cancel', 'Cancel job')]):
-
+            with patch(
+                "dumpyarabot.config.USER_COMMANDS", [("dump", "Dump firmware")]
+            ), patch(
+                "dumpyarabot.config.INTERNAL_COMMANDS", [("status", "Check status")]
+            ), patch(
+                "dumpyarabot.config.ADMIN_COMMANDS", [("cancel", "Cancel job")]
+            ):
                 await help_command(mock_telegram_update, context)
 
                 # Should send help message without admin commands
@@ -444,15 +537,18 @@ class TestRestartHandler:
     """Test cases for the /restart command handler."""
 
     @pytest.mark.asyncio
-    async def test_restart_command_admin_user(self, test_config, mock_telegram_update, mock_telegram_bot):
+    async def test_restart_command_admin_user(
+        self, test_config, mock_telegram_update, mock_telegram_bot
+    ):
         """Test /restart command for admin user."""
         context = MagicMock()
         context.bot = mock_telegram_bot
 
-        with patch('dumpyarabot.handlers.settings') as mock_settings, \
-             patch('dumpyarabot.handlers.message_queue') as mock_queue, \
-             patch('dumpyarabot.handlers.check_admin_permissions') as mock_admin:
-
+        with patch("dumpyarabot.handlers.settings") as mock_settings, patch(
+            "dumpyarabot.handlers.message_queue"
+        ) as mock_queue, patch(
+            "dumpyarabot.handlers.check_admin_permissions"
+        ) as mock_admin:
             mock_settings.ALLOWED_CHATS = [mock_telegram_update.effective_chat.id]
             mock_settings.DEFAULT_PARSE_MODE = "Markdown"
             mock_admin.return_value = (True, None)  # User is admin
@@ -468,15 +564,18 @@ class TestRestartHandler:
             assert "inline_keyboard" in message.keyboard
 
     @pytest.mark.asyncio
-    async def test_restart_command_non_admin(self, test_config, mock_telegram_update, mock_telegram_bot):
+    async def test_restart_command_non_admin(
+        self, test_config, mock_telegram_update, mock_telegram_bot
+    ):
         """Test /restart command for non-admin user."""
         context = MagicMock()
         context.bot = mock_telegram_bot
 
-        with patch('dumpyarabot.handlers.settings') as mock_settings, \
-             patch('dumpyarabot.handlers.message_queue') as mock_queue, \
-             patch('dumpyarabot.handlers.check_admin_permissions') as mock_admin:
-
+        with patch("dumpyarabot.handlers.settings") as mock_settings, patch(
+            "dumpyarabot.handlers.message_queue"
+        ) as mock_queue, patch(
+            "dumpyarabot.handlers.check_admin_permissions"
+        ) as mock_admin:
             mock_settings.ALLOWED_CHATS = [mock_telegram_update.effective_chat.id]
             mock_settings.DEFAULT_PARSE_MODE = "Markdown"
             mock_admin.return_value = (False, "Not admin")

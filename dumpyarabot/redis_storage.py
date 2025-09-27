@@ -17,7 +17,9 @@ class RedisStorage:
     def get_redis_client(cls) -> redis.Redis:
         """Get or create Redis client connection."""
         if cls._redis_client is None:
-            cls._redis_client = redis.from_url(settings.REDIS_URL, decode_responses=True)
+            cls._redis_client = redis.from_url(
+                settings.REDIS_URL, decode_responses=True
+            )
         return cls._redis_client
 
     @classmethod
@@ -32,7 +34,7 @@ class RedisStorage:
         key = cls._make_key("pending_reviews")
         data = redis_client.get(key)
         if data:
-            return json.loads(data)
+            return json.loads(str(data))
         return {}
 
     @classmethod
@@ -76,7 +78,7 @@ class RedisStorage:
         data = redis_client.get(key)
 
         if data:
-            states = json.loads(data)
+            states = json.loads(str(data))
         else:
             states = {}
 
@@ -94,7 +96,7 @@ class RedisStorage:
         data = redis_client.get(key)
 
         if data:
-            states = json.loads(data)
+            states = json.loads(str(data))
         else:
             states = {}
 
@@ -109,7 +111,7 @@ class RedisStorage:
         data = redis_client.get(key)
 
         if data:
-            states = json.loads(data)
+            states = json.loads(str(data))
             if request_id in states:
                 del states[request_id]
                 redis_client.set(key, json.dumps(states))
@@ -122,7 +124,7 @@ class RedisStorage:
         data = redis_client.get(key)
 
         if data:
-            states = json.loads(data)
+            states = json.loads(str(data))
         else:
             states = {}
 
@@ -140,7 +142,7 @@ class RedisStorage:
         data = redis_client.get(key)
 
         if data:
-            states = json.loads(data)
+            states = json.loads(str(data))
         else:
             states = {}
 
@@ -155,15 +157,16 @@ class RedisStorage:
         data = redis_client.get(key)
 
         if data:
-            states = json.loads(data)
+            states = json.loads(str(data))
             if request_id in states:
                 del states[request_id]
                 redis_client.set(key, json.dumps(states))
 
     @classmethod
-
     @classmethod
-    def store_restart_message_info(cls, chat_id: int, message_id: int, user_mention: str) -> None:
+    def store_restart_message_info(
+        cls, chat_id: int, message_id: int, user_mention: str
+    ) -> None:
         """Store restart message info for post-restart update."""
         try:
             redis_client = cls.get_redis_client()
@@ -172,13 +175,16 @@ class RedisStorage:
             restart_info = {
                 "chat_id": chat_id,
                 "message_id": message_id,
-                "user_mention": user_mention
+                "user_mention": user_mention,
             }
 
-            redis_client.set(key, json.dumps(restart_info), ex=300)  # Expire after 5 minutes
+            redis_client.set(
+                key, json.dumps(restart_info), ex=300
+            )  # Expire after 5 minutes
 
         except Exception as e:
             from rich.console import Console
+
             console = Console()
             console.print(f"[red]Error storing restart message info: {e}[/red]")
 
@@ -191,11 +197,12 @@ class RedisStorage:
 
             data = redis_client.get(key)
             if data:
-                return json.loads(data)
+                return json.loads(str(data))
             return None
 
         except Exception as e:
             from rich.console import Console
+
             console = Console()
             console.print(f"[red]Error retrieving restart message info: {e}[/red]")
             return None
@@ -210,6 +217,7 @@ class RedisStorage:
 
         except Exception as e:
             from rich.console import Console
+
             console = Console()
             console.print(f"[red]Error clearing restart message info: {e}[/red]")
 
@@ -285,4 +293,3 @@ class ReviewStorage:
     ) -> None:
         """Remove mockup state for a request_id."""
         RedisStorage.remove_mockup_state(request_id)
-

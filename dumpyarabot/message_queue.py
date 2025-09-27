@@ -2,14 +2,14 @@ import asyncio
 import uuid
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, List, Optional
 
 import redis.asyncio as redis
+import telegram
 from pydantic import BaseModel
 from rich.console import Console
 from telegram import Bot
-from telegram.error import RetryAfter, TelegramError, NetworkError
-import telegram
+from telegram.error import BadRequest, NetworkError, RetryAfter, TelegramError
 
 from dumpyarabot.config import settings
 from dumpyarabot.schemas import DumpJob, JobStatus
@@ -19,6 +19,7 @@ console = Console()
 
 class MessageType(str, Enum):
     """Types of messages that can be queued."""
+
     COMMAND_REPLY = "command_reply"
     STATUS_UPDATE = "status_update"
     NOTIFICATION = "notification"
@@ -28,14 +29,16 @@ class MessageType(str, Enum):
 
 class MessagePriority(str, Enum):
     """Message priority levels."""
-    URGENT = "urgent"     # Errors, critical notifications
-    HIGH = "high"         # Command replies, user-facing updates
-    NORMAL = "normal"     # Status updates, progress reports
-    LOW = "low"           # Background notifications, cleanup
+
+    URGENT = "urgent"  # Errors, critical notifications
+    HIGH = "high"  # Command replies, user-facing updates
+    NORMAL = "normal"  # Status updates, progress reports
+    LOW = "low"  # Background notifications, cleanup
 
 
 class QueuedMessage(BaseModel):
     """Schema for messages in the Redis queue."""
+
     message_id: str
     type: MessageType
     priority: MessagePriority
@@ -54,7 +57,7 @@ class QueuedMessage(BaseModel):
     scheduled_for: Optional[datetime] = None
     context: Dict[str, Any] = {}
 
-    def __init__(self, **data):
+    def __init__(self, **data: Any) -> None:
         if "message_id" not in data:
             data["message_id"] = str(uuid.uuid4())
         if "created_at" not in data:
@@ -67,15 +70,18 @@ class QueuedMessage(BaseModel):
 # Rebuild the model to resolve any forward references
 QueuedMessage.model_rebuild()
 
+
 class MessageQueue:
     """Redis-based message queue for unified Telegram messaging."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._redis: Optional[redis.Redis] = None
         self._consumer_task: Optional[asyncio.Task] = None
         self._running = False
         self._bot: Optional[Bot] = None
-        self._last_edit_times: Dict[str, datetime] = {}  # Track edit times by message_id
+        self._last_edit_times: Dict[
+            str, datetime
+        ] = {}  # Track edit times by message_id
 
     async def _get_redis(self) -> redis.Redis:
         """Get or create Redis connection."""
@@ -98,7 +104,9 @@ class MessageQueue:
         # Add to priority queue (LPUSH for FIFO with RPOP)
         await redis_client.lpush(queue_key, message_json)
 
-        console.print(f"[green]Queued {message.type.value} message for chat {message.chat_id} (priority: {message.priority.value})[/green]")
+        console.print(
+            f"[green]Queued {message.type.value} message for chat {message.chat_id} (priority: {message.priority.value})[/green]"
+        )
 
         # Return the message_id for cases where we need to track it
         return message.message_id
@@ -110,7 +118,7 @@ class MessageQueue:
         reply_to_message_id: Optional[int] = None,
         parse_mode: Optional[str] = settings.DEFAULT_PARSE_MODE,
         priority: MessagePriority = MessagePriority.HIGH,
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Send a reply message."""
         message = QueuedMessage(
@@ -120,7 +128,7 @@ class MessageQueue:
             text=text,
             parse_mode=parse_mode,
             reply_to_message_id=reply_to_message_id,
-            context=context or {}
+            context=context or {},
         )
         await self.publish(message)
 
@@ -130,7 +138,7 @@ class MessageQueue:
         text: str,
         edit_message_id: Optional[int] = None,
         parse_mode: Optional[str] = settings.DEFAULT_PARSE_MODE,
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Send a status update message."""
         # Ensure parse_mode is always set to a valid value
@@ -144,7 +152,7 @@ class MessageQueue:
             parse_mode=parse_mode,
             edit_message_id=edit_message_id,
             disable_web_page_preview=True,
-            context=context or {}
+            context=context or {},
         )
         await self.publish(message)
 
@@ -155,13 +163,10 @@ class MessageQueue:
         reply_to_message_id: int,
         reply_to_chat_id: int,
         parse_mode: Optional[str] = settings.DEFAULT_PARSE_MODE,
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Send a cross-chat message with reply parameters."""
-        reply_params = {
-            "message_id": reply_to_message_id,
-            "chat_id": reply_to_chat_id
-        }
+        reply_params = {"message_id": reply_to_message_id, "chat_id": reply_to_chat_id}
 
         message = QueuedMessage(
             type=MessageType.CROSS_CHAT,
@@ -170,7 +175,7 @@ class MessageQueue:
             text=text,
             parse_mode=parse_mode,
             reply_parameters=reply_params,
-            context=context or {}
+            context=context or {},
         )
         await self.publish(message)
 
@@ -180,7 +185,7 @@ class MessageQueue:
         text: str,
         priority: MessagePriority = MessagePriority.URGENT,
         parse_mode: Optional[str] = settings.DEFAULT_PARSE_MODE,
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Send a notification message."""
         message = QueuedMessage(
@@ -189,15 +194,12 @@ class MessageQueue:
             chat_id=chat_id,
             text=text,
             parse_mode=parse_mode,
-            context=context or {}
+            context=context or {},
         )
         await self.publish(message)
 
     async def send_error(
-        self,
-        chat_id: int,
-        text: str,
-        context: Optional[Dict[str, Any]] = None
+        self, chat_id: int, text: str, context: Optional[Dict[str, Any]] = None
     ) -> None:
         """Send an error message with urgent priority."""
         message = QueuedMessage(
@@ -206,19 +208,19 @@ class MessageQueue:
             chat_id=chat_id,
             text=text,
             parse_mode=settings.DEFAULT_PARSE_MODE,
-            context=context or {}
+            context=context or {},
         )
         await self.publish(message)
 
     class MessagePlaceholder:
         """Placeholder object that mimics a Telegram Message for compatibility."""
+
         def __init__(self, message_id: str, chat_id: int):
             self.message_id = message_id
-            self.chat = type('Chat', (), {'id': chat_id})()
+            self.chat = type("Chat", (), {"id": chat_id})()
 
     async def publish_and_return_placeholder(
-        self,
-        message: QueuedMessage
+        self, message: QueuedMessage
     ) -> "MessageQueue.MessagePlaceholder":
         """Publish message and return a placeholder object for compatibility."""
         message_id = await self.publish(message)
@@ -230,7 +232,7 @@ class MessageQueue:
         text: str,
         parse_mode: str = settings.DEFAULT_PARSE_MODE,
         reply_to_message_id: Optional[int] = None,
-        disable_web_page_preview: bool = True
+        disable_web_page_preview: bool = True,
     ) -> "telegram.Message":
         """Send message directly via bot and return real Telegram Message object.
 
@@ -252,24 +254,25 @@ class MessageQueue:
         if not self._bot:
             raise Exception("Bot not initialized - cannot send immediate message")
 
-        console.print(f"[blue]Sending immediate message to chat {chat_id} with parse_mode={parse_mode}[/blue]")
+        console.print(
+            f"[blue]Sending immediate message to chat {chat_id} with parse_mode={parse_mode}[/blue]"
+        )
 
         message = await self._bot.send_message(
             chat_id=chat_id,
             text=text,
             parse_mode=parse_mode,
             reply_to_message_id=reply_to_message_id,
-            disable_web_page_preview=disable_web_page_preview
+            disable_web_page_preview=disable_web_page_preview,
         )
 
-        console.print(f"[green]Sent immediate message {message.message_id} to chat {chat_id}[/green]")
+        console.print(
+            f"[green]Sent immediate message {message.message_id} to chat {chat_id}[/green]"
+        )
         return message
 
     async def send_immediate_status_update(
-        self,
-        chat_id: int,
-        text: str,
-        context: Optional[Dict[str, Any]] = None
+        self, chat_id: int, text: str, context: Optional[Dict[str, Any]] = None
     ) -> "MessageQueue.MessagePlaceholder":
         """Send a status update message immediately and return a message placeholder for tracking.
 
@@ -290,7 +293,7 @@ class MessageQueue:
             chat_id=chat_id,
             text=text,
             parse_mode=settings.DEFAULT_PARSE_MODE,
-            context=context or {}
+            context=context or {},
         )
         return await self.publish_and_return_placeholder(message)
 
@@ -328,41 +331,70 @@ class MessageQueue:
             MessagePriority.URGENT,
             MessagePriority.HIGH,
             MessagePriority.NORMAL,
-            MessagePriority.LOW
+            MessagePriority.LOW,
         ]
 
         last_message_time = datetime.utcnow()
-        rate_limit_delay = 0
+        rate_limit_delay: float = 0
 
         while self._running:
             try:
                 message_processed = False
 
+                # First, check for and process any delayed messages that are now ready
+                delay_key = f"{settings.REDIS_KEY_PREFIX}delayed_messages"
+                now_timestamp = datetime.utcnow().timestamp()
+
+                # Get messages that are ready to be processed (score <= current time)
+                ready_messages = await redis_client.zrangebyscore(
+                    delay_key, 0, now_timestamp, start=0, num=1
+                )
+                if ready_messages:
+                    # Remove the message from the delayed set
+                    await redis_client.zremrangebyscore(delay_key, 0, now_timestamp)
+
+                    # Process the delayed message
+                    message = QueuedMessage.model_validate_json(ready_messages[0])
+                    console.print(
+                        f"[blue]Processing delayed message: {message.message_id}[/blue]"
+                    )
+                    success = await self._process_message(message)
+
+                    if success:
+                        message_processed = True
+                        last_message_time = datetime.utcnow()
+                    else:
+                        # Re-queue failed delayed message with incremented retry count
+                        await self._handle_failed_message(message)
+
                 # Check each priority queue in order
-                for priority in priorities:
-                    queue_key = self._make_queue_key(priority)
+                if not message_processed:
+                    for priority in priorities:
+                        queue_key = self._make_queue_key(priority)
 
-                    # Try to get a message (non-blocking)
-                    message_json = await redis_client.rpop(queue_key)
-                    if message_json:
-                        message = QueuedMessage.model_validate_json(message_json)
-                        success = await self._process_message(message)
+                        # Try to get a message (non-blocking)
+                        message_json = await redis_client.rpop(queue_key)
+                        if message_json:
+                            message = QueuedMessage.model_validate_json(message_json)
+                            success = await self._process_message(message)
 
-                        if success:
-                            message_processed = True
-                            last_message_time = datetime.utcnow()
+                            if success:
+                                message_processed = True
+                                last_message_time = datetime.utcnow()
 
-                            # Implement basic rate limiting (30 messages/second max)
-                            now = datetime.utcnow()
-                            time_since_last = (now - last_message_time).total_seconds()
-                            if time_since_last < 0.033:  # ~30 messages/second
-                                rate_limit_delay = 0.033 - time_since_last
-                                await asyncio.sleep(rate_limit_delay)
-                        else:
-                            # Re-queue failed message with incremented retry count
-                            await self._handle_failed_message(message)
+                                # Implement basic rate limiting (30 messages/second max)
+                                now = datetime.utcnow()
+                                time_since_last = (
+                                    now - last_message_time
+                                ).total_seconds()
+                                if time_since_last < 0.033:  # ~30 messages/second
+                                    rate_limit_delay = 0.033 - time_since_last
+                                    await asyncio.sleep(rate_limit_delay)
+                            else:
+                                # Re-queue failed message with incremented retry count
+                                await self._handle_failed_message(message)
 
-                        break  # Process one message at a time
+                            break  # Process one message at a time
 
                 # If no message was processed, wait a bit before checking again
                 if not message_processed:
@@ -382,8 +414,14 @@ class MessageQueue:
             return False
 
         try:
-            parse_mode_info = f" with parse_mode={message.parse_mode}" if message.parse_mode else " with NO parse_mode"
-            console.print(f"[blue]Processing {message.type.value} message for chat {message.chat_id}{parse_mode_info}[/blue]")
+            parse_mode_info = (
+                f" with parse_mode={message.parse_mode}"
+                if message.parse_mode
+                else " with NO parse_mode"
+            )
+            console.print(
+                f"[blue]Processing {message.type.value} message for chat {message.chat_id}{parse_mode_info}[/blue]"
+            )
 
             # Prepare common parameters
             kwargs = {
@@ -401,8 +439,11 @@ class MessageQueue:
             if message.keyboard:
                 # Handle InlineKeyboardMarkup if provided
                 from telegram import InlineKeyboardMarkup
+
                 # Reconstruct InlineKeyboardMarkup from dict
-                kwargs["reply_markup"] = InlineKeyboardMarkup.de_json(message.keyboard, bot=self._bot)
+                kwargs["reply_markup"] = InlineKeyboardMarkup.de_json(
+                    message.keyboard, bot=self._bot
+                )
 
             # Handle different message types
             if message.edit_message_id:
@@ -416,9 +457,10 @@ class MessageQueue:
                 if message.reply_parameters:
                     # Cross-chat reply
                     from telegram import ReplyParameters
+
                     kwargs["reply_parameters"] = ReplyParameters(
                         message_id=message.reply_parameters["message_id"],
-                        chat_id=message.reply_parameters["chat_id"]
+                        chat_id=message.reply_parameters["chat_id"],
                     )
                 elif message.reply_to_message_id:
                     kwargs["reply_to_message_id"] = message.reply_to_message_id
@@ -428,14 +470,22 @@ class MessageQueue:
                 # Handle auto-delete if specified
                 if message.delete_after:
                     asyncio.create_task(
-                        self._auto_delete_message(message.chat_id, sent_message.message_id, message.delete_after)
+                        self._auto_delete_message(
+                            message.chat_id,
+                            sent_message.message_id,
+                            message.delete_after,
+                        )
                     )
 
-            console.print(f"[green]Successfully processed {message.type.value} message[/green]")
+            console.print(
+                f"[green]Successfully processed {message.type.value} message[/green]"
+            )
             return True
 
         except RetryAfter as e:
-            console.print(f"[yellow]Rate limited by Telegram API. Retry after {e.retry_after} seconds[/yellow]")
+            console.print(
+                f"[yellow]Rate limited by Telegram API. Retry after {e.retry_after} seconds[/yellow]"
+            )
             # Re-queue the message with a delay
             message.scheduled_for = datetime.utcnow() + timedelta(seconds=e.retry_after)
             await self._requeue_message(message)
@@ -444,10 +494,26 @@ class MessageQueue:
         except NetworkError as e:
             console.print(f"[yellow]Network error processing message: {e}[/yellow]")
             # Simple retry with exponential backoff for network issues
-            retry_delay = min(30 * (2 ** message.retry_count), 300)  # 30s, 60s, 120s, 240s, 300s max
+            retry_delay = min(
+                30 * (2**message.retry_count), 300
+            )  # 30s, 60s, 120s, 240s, 300s max
             message.scheduled_for = datetime.utcnow() + timedelta(seconds=retry_delay)
             await self._requeue_message(message)
             return True  # Don't increment retry count for network issues
+
+        except BadRequest as e:
+            error_message = str(e).lower()
+            if (
+                "message to edit not found" in error_message
+                or "message is not modified" in error_message
+            ):
+                console.print(
+                    f"[yellow]Message no longer exists or unchanged, skipping: {e}[/yellow]"
+                )
+                return True  # Don't retry - message was deleted or is unchanged
+            else:
+                console.print(f"[red]BadRequest error processing message: {e}[/red]")
+                return False
 
         except TelegramError as e:
             console.print(f"[red]Telegram API error processing message: {e}[/red]")
@@ -462,13 +528,17 @@ class MessageQueue:
         message.retry_count += 1
 
         if message.retry_count <= message.max_retries:
-            console.print(f"[yellow]Retrying message {message.message_id} (attempt {message.retry_count})[/yellow]")
+            console.print(
+                f"[yellow]Retrying message {message.message_id} (attempt {message.retry_count})[/yellow]"
+            )
             # Add exponential backoff delay
-            delay = min(2 ** message.retry_count, 300)  # Max 5 minutes
+            delay = min(2**message.retry_count, 300)  # Max 5 minutes
             message.scheduled_for = datetime.utcnow() + timedelta(seconds=delay)
             await self._requeue_message(message)
         else:
-            console.print(f"[red]Message {message.message_id} exceeded max retries, moving to dead letter queue[/red]")
+            console.print(
+                f"[red]Message {message.message_id} exceeded max retries, moving to dead letter queue[/red]"
+            )
             await self._move_to_dead_letter_queue(message)
 
     async def _requeue_message(self, message: QueuedMessage) -> None:
@@ -489,14 +559,21 @@ class MessageQueue:
         dlq_key = f"{settings.REDIS_KEY_PREFIX}dead_letter_queue"
         await redis_client.lpush(dlq_key, message.model_dump_json())
 
-    async def _auto_delete_message(self, chat_id: int, message_id: int, delay: int) -> None:
+    async def _auto_delete_message(
+        self, chat_id: int, message_id: int, delay: int
+    ) -> None:
         """Auto-delete a message after the specified delay."""
         await asyncio.sleep(delay)
         try:
-            await self._bot.delete_message(chat_id=chat_id, message_id=message_id)
-            console.print(f"[green]Auto-deleted message {message_id} from chat {chat_id}[/green]")
+            if self._bot:
+                await self._bot.delete_message(chat_id=chat_id, message_id=message_id)
+            console.print(
+                f"[green]Auto-deleted message {message_id} from chat {chat_id}[/green]"
+            )
         except Exception as e:
-            console.print(f"[yellow]Failed to auto-delete message {message_id}: {e}[/yellow]")
+            console.print(
+                f"[yellow]Failed to auto-delete message {message_id}: {e}[/yellow]"
+            )
 
     async def get_queue_stats(self) -> Dict[str, int]:
         """Get statistics about the message queues."""
@@ -508,11 +585,59 @@ class MessageQueue:
             count = await redis_client.llen(queue_key)
             stats[priority.value] = count
 
+        # Add delayed messages stats
+        delay_key = f"{settings.REDIS_KEY_PREFIX}delayed_messages"
+        stats["delayed"] = await redis_client.zcard(delay_key)
+
         # Add dead letter queue stats
         dlq_key = f"{settings.REDIS_KEY_PREFIX}dead_letter_queue"
         stats["dead_letter"] = await redis_client.llen(dlq_key)
 
         return stats
+
+    async def clear_stuck_edit_messages(self) -> int:
+        """Clear messages that are trying to edit non-existent messages.
+
+        This is useful for cleaning up messages that were queued before a restart
+        and are now trying to edit messages that have been deleted.
+
+        Returns:
+            Number of messages cleared
+        """
+        redis_client = await self._get_redis()
+        cleared_count = 0
+
+        for priority in MessagePriority:
+            queue_key = self._make_queue_key(priority)
+
+            # Get all messages in this queue
+            messages = await redis_client.lrange(queue_key, 0, -1)
+            messages_to_keep = []
+
+            for message_json in messages:
+                try:
+                    message = QueuedMessage.model_validate_json(message_json)
+                    # If this message has an edit_message_id, it's potentially stuck
+                    if message.edit_message_id:
+                        console.print(
+                            f"[yellow]Clearing stuck edit message: {message.message_id} (editing {message.edit_message_id})[/yellow]"
+                        )
+                        cleared_count += 1
+                    else:
+                        messages_to_keep.append(message_json)
+                except Exception as e:
+                    console.print(f"[red]Error parsing message, clearing: {e}[/red]")
+                    cleared_count += 1
+
+            # Clear the queue and re-add only the messages to keep
+            await redis_client.delete(queue_key)
+            if messages_to_keep:
+                # Use LPUSH to maintain FIFO order (newest messages at the front)
+                for msg in reversed(messages_to_keep):
+                    await redis_client.lpush(queue_key, msg)
+
+        console.print(f"[green]Cleared {cleared_count} stuck edit messages[/green]")
+        return cleared_count
 
     # ========== ARQ BRIDGE FUNCTIONALITY ==========
     # This section bridges to ARQ while preserving all Telegram messaging features
@@ -535,13 +660,10 @@ class MessageQueue:
         edit_message_id: int,
         reply_to_message_id: int,
         reply_to_chat_id: int,
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Send a cross-chat message edit with reply parameters."""
-        reply_params = {
-            "message_id": reply_to_message_id,
-            "chat_id": reply_to_chat_id
-        }
+        reply_params = {"message_id": reply_to_message_id, "chat_id": reply_to_chat_id}
 
         message = QueuedMessage(
             type=MessageType.CROSS_CHAT,
@@ -552,7 +674,7 @@ class MessageQueue:
             edit_message_id=edit_message_id,
             reply_parameters=reply_params,
             disable_web_page_preview=True,
-            context=context or {}
+            context=context or {},
         )
         await self.publish(message)
 
@@ -578,14 +700,16 @@ class MessageQueue:
             "started_at": metadata.get("start_time"),
             "completed_at": metadata.get("end_time"),
             "worker_id": "arq_worker",
-            "error_details": metadata.get("error_context", {}).get("message") if metadata.get("error_context") else None,
+            "error_details": metadata.get("error_context", {}).get("message")
+            if metadata.get("error_context")
+            else None,
             "result_data": result,
             "progress": self._extract_current_progress(metadata),
             # Add rich metadata fields
             "device_info": metadata.get("device_info"),
             "repository": metadata.get("repository"),
             "telegram_context": metadata.get("telegram_context", {}),
-            "progress_history": metadata.get("progress_history", [])
+            "progress_history": metadata.get("progress_history", []),
         }
 
         return DumpJob.model_validate(job_data)
@@ -597,7 +721,7 @@ class MessageQueue:
             "in_progress": JobStatus.PROCESSING,
             "complete": JobStatus.COMPLETED,
             "not_found": JobStatus.FAILED,
-            "deferred": JobStatus.QUEUED
+            "deferred": JobStatus.QUEUED,
         }
         return status_mapping.get(arq_status, JobStatus.FAILED)
 
@@ -628,66 +752,36 @@ class MessageQueue:
             "status_breakdown": {
                 "queued": arq_stats.get("queue_length", 0),
                 "processing": 0,  # ARQ doesn't provide this directly
-                "completed": 0,   # ARQ doesn't provide this directly
-                "failed": 0,      # ARQ doesn't provide this directly
-                "cancelled": 0    # ARQ doesn't provide this directly
+                "completed": 0,  # ARQ doesn't provide this directly
+                "failed": 0,  # ARQ doesn't provide this directly
+                "cancelled": 0,  # ARQ doesn't provide this directly
             },
             "worker_keys": [],
-            "arq_stats": arq_stats  # Include raw ARQ stats for debugging
+            "arq_stats": arq_stats,  # Include raw ARQ stats for debugging
         }
 
     # ========== METADATA ENHANCED METHODS ==========
 
-    async def queue_dump_job_with_metadata(self, enhanced_job_data: Dict[str, Any]) -> str:
+    async def queue_dump_job_with_metadata(
+        self, enhanced_job_data: Dict[str, Any]
+    ) -> str:
         """Queue a dump job with metadata support."""
         from dumpyarabot.arq_config import arq_pool, get_job_result_ttl
 
         job_data = enhanced_job_data
 
         # Enqueue to ARQ with metadata
-        arq_job = await arq_pool.enqueue_job(
+        await arq_pool.enqueue_job(
             "process_firmware_dump",
             job_data,
             job_id=enhanced_job_data["job_id"],
-            result_ttl=get_job_result_ttl("running")  # Initial TTL
+            result_ttl=get_job_result_ttl("running"),  # Initial TTL
         )
 
-        console.print(f"[green]Queued ARQ dump job {enhanced_job_data['job_id']} with metadata[/green]")
+        console.print(
+            f"[green]Queued ARQ dump job {enhanced_job_data['job_id']} with metadata[/green]"
+        )
         return enhanced_job_data["job_id"]
-
-    async def get_job_status(self, job_id: str) -> Optional[DumpJob]:
-        """Enhanced ARQ status retrieval with rich metadata."""
-        from dumpyarabot.arq_config import arq_pool
-
-        arq_status = await arq_pool.get_job_status(job_id)
-        if not arq_status:
-            return None
-
-        # Extract metadata from ARQ result if available
-        result = arq_status.get("result", {})
-        metadata = result.get("metadata", {})
-
-        # Build enhanced DumpJob with metadata
-        job_data = {
-            "job_id": job_id,
-            "status": self._arq_status_to_job_status(arq_status["status"]),
-            "dump_args": {"url": metadata.get("telegram_context", {}).get("url", "")},
-            "add_blacklist": False,
-            "created_at": arq_status.get("enqueue_time"),
-            "started_at": metadata.get("start_time"),
-            "completed_at": metadata.get("end_time"),
-            "worker_id": "arq_worker",
-            "error_details": metadata.get("error_context", {}).get("message") if metadata.get("error_context") else None,
-            "result_data": result,
-            "progress": self._extract_current_progress(metadata),
-            # Add rich metadata fields
-            "device_info": metadata.get("device_info"),
-            "repository": metadata.get("repository"),
-            "telegram_context": metadata.get("telegram_context", {}),
-            "progress_history": metadata.get("progress_history", [])
-        }
-
-        return DumpJob.model_validate(job_data)
 
     def _extract_current_progress(self, metadata: Dict) -> Optional[Dict]:
         """Extract current progress from metadata history."""
@@ -698,7 +792,7 @@ class MessageQueue:
                 "current_step": latest.get("message", "Unknown"),
                 "percentage": latest.get("percentage", 0),
                 "details": latest,
-                "current_step_number": len(history)
+                "current_step_number": len(history),
             }
         return None
 
@@ -717,7 +811,9 @@ class MessageQueue:
     # Legacy methods (kept for backward compatibility during transition)
     async def get_next_job(self, worker_id: str) -> Optional[DumpJob]:
         """Legacy method - no longer used with ARQ workers."""
-        console.print(f"[yellow]get_next_job called but ARQ handles worker management[/yellow]")
+        console.print(
+            "[yellow]get_next_job called but ARQ handles worker management[/yellow]"
+        )
         return None
 
     async def update_job_status(
@@ -727,10 +823,12 @@ class MessageQueue:
         progress: Optional[Dict[str, Any]] = None,
         error_details: Optional[str] = None,
         result_data: Optional[Dict[str, Any]] = None,
-        job_data: Optional[DumpJob] = None
+        job_data: Optional[DumpJob] = None,
     ) -> bool:
         """Legacy method - ARQ handles job status internally."""
-        console.print(f"[yellow]update_job_status called but ARQ manages job status internally[/yellow]")
+        console.print(
+            "[yellow]update_job_status called but ARQ manages job status internally[/yellow]"
+        )
         return True
 
 

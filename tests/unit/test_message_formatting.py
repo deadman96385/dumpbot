@@ -1,31 +1,32 @@
 """
 Unit tests for dumpyarabot message formatting utilities.
 """
-import pytest
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
-from datetime import datetime, timezone, timedelta
+
+import pytest
 
 from dumpyarabot.message_formatting import (
-    get_arq_start_time,
-    generate_progress_bar,
-    calculate_elapsed_time,
-    format_url_display,
-    format_dump_options,
-    format_comprehensive_progress_message,
-    format_build_summary_info,
-    format_device_properties_message,
-    format_channel_notification_message,
-    format_error_message,
-    format_success_message,
-    format_status_update_message,
-    format_enhanced_job_status,
-    format_jobs_overview,
-    format_time_ago,
+    _create_ascii_bar,
+    _create_block_bar,
+    _create_empty_bar,
     _create_progress_bar,
     _create_unicode_bar,
-    _create_block_bar,
-    _create_ascii_bar,
-    _create_empty_bar
+    calculate_elapsed_time,
+    format_build_summary_info,
+    format_channel_notification_message,
+    format_comprehensive_progress_message,
+    format_device_properties_message,
+    format_dump_options,
+    format_enhanced_job_status,
+    format_error_message,
+    format_jobs_overview,
+    format_status_update_message,
+    format_success_message,
+    format_time_ago,
+    format_url_display,
+    generate_progress_bar,
+    get_arq_start_time,
 )
 
 
@@ -36,14 +37,12 @@ class TestARQUtilities:
     @pytest.mark.asyncio
     async def test_get_arq_start_time_success(self):
         """Test successful ARQ start time retrieval."""
-        mock_arq_status = {
-            "start_time": "2023-01-01T12:00:00Z"
-        }
+        mock_arq_status = {"start_time": "2023-01-01T12:00:00Z"}
 
         mock_pool = AsyncMock()
         mock_pool.get_job_status = AsyncMock(return_value=mock_arq_status)
 
-        with patch('dumpyarabot.arq_config.arq_pool', mock_pool):
+        with patch("dumpyarabot.arq_config.arq_pool", mock_pool):
             result = await get_arq_start_time("test_job_123")
 
             mock_pool.get_job_status.assert_called_once_with("test_job_123")
@@ -55,7 +54,7 @@ class TestARQUtilities:
         mock_pool = AsyncMock()
         mock_pool.get_job_status = AsyncMock(return_value=None)
 
-        with patch('dumpyarabot.arq_config.arq_pool', mock_pool):
+        with patch("dumpyarabot.arq_config.arq_pool", mock_pool):
             result = await get_arq_start_time("test_job_123")
 
             assert result is None
@@ -66,7 +65,7 @@ class TestARQUtilities:
         mock_pool = AsyncMock()
         mock_pool.get_job_status = AsyncMock(side_effect=Exception("Connection error"))
 
-        with patch('dumpyarabot.arq_config.arq_pool', mock_pool):
+        with patch("dumpyarabot.arq_config.arq_pool", mock_pool):
             result = await get_arq_start_time("test_job_123")
 
             assert result is None
@@ -78,11 +77,7 @@ class TestProgressBar:
 
     def test_generate_progress_bar_with_progress(self):
         """Test progress bar generation with valid progress data."""
-        progress = {
-            "percentage": 45,
-            "current_step_number": 4,
-            "total_steps": 8
-        }
+        progress = {"percentage": 45, "current_step_number": 4, "total_steps": 8}
 
         result = generate_progress_bar(progress)
 
@@ -243,10 +238,7 @@ class TestFormatting:
 
     def test_format_dump_options_all_options(self):
         """Test dump options formatting with all options enabled."""
-        dump_args = {
-            "use_alt_dumper": True,
-            "use_privdump": True
-        }
+        dump_args = {"use_alt_dumper": True, "use_privdump": True}
         options = format_dump_options(dump_args, add_blacklist=True)
 
         assert "Alt Dumper" in options
@@ -255,20 +247,14 @@ class TestFormatting:
 
     def test_format_dump_options_no_options(self):
         """Test dump options formatting with no options enabled."""
-        dump_args = {
-            "use_alt_dumper": False,
-            "use_privdump": False
-        }
+        dump_args = {"use_alt_dumper": False, "use_privdump": False}
         options = format_dump_options(dump_args, add_blacklist=False)
 
         assert options == []
 
     def test_format_dump_options_partial(self):
         """Test dump options formatting with some options enabled."""
-        dump_args = {
-            "use_alt_dumper": True,
-            "use_privdump": False
-        }
+        dump_args = {"use_alt_dumper": True, "use_privdump": False}
         options = format_dump_options(dump_args, add_blacklist=False)
 
         assert options == ["Alt Dumper"]
@@ -286,17 +272,13 @@ class TestMessageFormatting:
             "dump_args": {
                 "url": "https://example.com/firmware.zip",
                 "use_alt_dumper": False,
-                "use_privdump": False
+                "use_privdump": False,
             },
             "add_blacklist": False,
-            "worker_id": "worker_001"
+            "worker_id": "worker_001",
         }
 
-        progress = {
-            "percentage": 45,
-            "current_step_number": 4,
-            "total_steps": 8
-        }
+        progress = {"percentage": 45, "current_step_number": 4, "total_steps": 8}
 
         current_step = "Extracting partitions..."
 
@@ -317,27 +299,21 @@ class TestMessageFormatting:
             "dump_args": {
                 "url": "https://example.com/firmware.zip",
                 "use_alt_dumper": True,
-                "use_privdump": False
+                "use_privdump": False,
             },
             "add_blacklist": True,
-            "worker_id": "worker_001"
+            "worker_id": "worker_001",
         }
 
-        progress = {
-            "percentage": 100,
-            "current_step_number": 8,
-            "total_steps": 8
-        }
+        progress = {"percentage": 100, "current_step_number": 8, "total_steps": 8}
 
         metadata = {
             "device_info": {
                 "brand": "Samsung",
                 "codename": "galaxy_s21",
-                "android_version": "13"
+                "android_version": "13",
             },
-            "repository": {
-                "url": "https://gitlab.com/test/repo"
-            }
+            "repository": {"url": "https://gitlab.com/test/repo"},
         }
 
         current_step = "Dump completed successfully"
@@ -360,21 +336,18 @@ class TestMessageFormatting:
             "dump_args": {
                 "url": "https://example.com/firmware.zip",
                 "use_alt_dumper": False,
-                "use_privdump": False
+                "use_privdump": False,
             },
-            "add_blacklist": False
+            "add_blacklist": False,
         }
 
-        progress = {
-            "current_step": "Failed",
-            "error_message": "Network timeout"
-        }
+        progress = {"current_step": "Failed", "error_message": "Network timeout"}
 
         metadata = {
             "error_context": {
                 "message": "Failed to download firmware",
                 "current_step": "Download",
-                "last_successful_step": "Validation"
+                "last_successful_step": "Validation",
             }
         }
 
@@ -392,10 +365,7 @@ class TestMessageFormatting:
     def test_format_build_summary_info(self):
         """Test build summary formatting."""
         result = format_build_summary_info(
-            "firmware_build",
-            42,
-            "SUCCESS",
-            "2023-01-01 12:00:00"
+            "firmware_build", 42, "SUCCESS", "2023-01-01 12:00:00"
         )
 
         assert "**Job:** `firmware\\_build`" in result  # Underscores are escaped
@@ -410,7 +380,7 @@ class TestMessageFormatting:
             "codename": "galaxy_s21",
             "release": "13",
             "fingerprint": "samsung/galaxy_s21/...",
-            "platform": "sm8350"
+            "platform": "sm8350",
         }
 
         result = format_device_properties_message(device_props)
@@ -422,15 +392,12 @@ class TestMessageFormatting:
 
     def test_format_channel_notification_message(self):
         """Test channel notification formatting."""
-        device_props = {
-            "brand": "Samsung",
-            "codename": "galaxy_s21"
-        }
+        device_props = {"brand": "Samsung", "codename": "galaxy_s21"}
 
         result = format_channel_notification_message(
             device_props,
             "https://gitlab.com/test/repo",
-            "https://example.com/firmware.zip"
+            "https://example.com/firmware.zip",
         )
 
         assert "*Brand*: `Samsung`" in result
@@ -443,7 +410,7 @@ class TestMessageFormatting:
             "Network Error",
             "Connection timeout after 30 seconds",
             "test_job_123",
-            {"url": "https://example.com", "attempts": 3}
+            {"url": "https://example.com", "attempts": 3},
         )
 
         assert "❌ *Network Error*" in result
@@ -456,13 +423,11 @@ class TestMessageFormatting:
         """Test success message formatting."""
         links = {
             "Repository": "https://gitlab.com/test/repo",
-            "Download": "https://example.com/firmware.zip"
+            "Download": "https://example.com/firmware.zip",
         }
 
         result = format_success_message(
-            "Dump Completed",
-            "Firmware extracted successfully",
-            links
+            "Dump Completed", "Firmware extracted successfully", links
         )
 
         assert "✅ *Dump Completed*" in result
@@ -473,10 +438,7 @@ class TestMessageFormatting:
     def test_format_status_update_message(self):
         """Test status update message formatting."""
         result = format_status_update_message(
-            "processing",
-            "test_job_123",
-            "Extracting system partition",
-            75.5
+            "processing", "test_job_123", "Extracting system partition", 75.5
         )
 
         assert "🚀 *Status: Processing*" in result
@@ -501,17 +463,12 @@ class TestEnhancedFormatting:
                 "device_info": {
                     "brand": "Samsung",
                     "codename": "galaxy_s21",
-                    "android_version": "13"
+                    "android_version": "13",
                 },
-                "repository": {
-                    "url": "https://gitlab.com/test/repo"
-                }
+                "repository": {"url": "https://gitlab.com/test/repo"},
             }
         }
-        mock_job.progress = {
-            "percentage": 100,
-            "current_step": "Completed"
-        }
+        mock_job.progress = {"percentage": 100, "current_step": "Completed"}
         mock_job.started_at = datetime(2023, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
         mock_job.completed_at = datetime(2023, 1, 1, 13, 0, 0, tzinfo=timezone.utc)
 
@@ -533,7 +490,7 @@ class TestEnhancedFormatting:
             "metadata": {
                 "error_context": {
                     "message": "Network timeout",
-                    "current_step": "Download"
+                    "current_step": "Download",
                 }
             }
         }
@@ -555,27 +512,17 @@ class TestEnhancedFormatting:
         active_job.job_id = "active_job_123"
         active_job.result_data = {
             "metadata": {
-                "telegram_context": {
-                    "url": "https://example.com/firmware.zip"
-                }
+                "telegram_context": {"url": "https://example.com/firmware.zip"}
             }
         }
-        active_job.progress = {
-            "current_step": "Extracting",
-            "percentage": 45
-        }
+        active_job.progress = {"current_step": "Extracting", "percentage": 45}
 
         # Mock recent jobs
         recent_job = MagicMock()
         recent_job.job_id = "recent_job_456"
         recent_job.status = "completed"
         recent_job.result_data = {
-            "metadata": {
-                "device_info": {
-                    "brand": "Samsung",
-                    "codename": "galaxy_s21"
-                }
-            }
+            "metadata": {"device_info": {"brand": "Samsung", "codename": "galaxy_s21"}}
         }
         recent_job.completed_at = datetime.now(timezone.utc) - timedelta(hours=1)
         recent_job.started_at = None
@@ -639,20 +586,18 @@ class TestIntegration:
             "dump_args": {
                 "url": "https://example.com/firmware.zip",
                 "use_alt_dumper": False,
-                "use_privdump": False
-            }
+                "use_privdump": False,
+            },
         }
 
-        progress = {
-            "percentage": 30,
-            "current_step_number": 3,
-            "total_steps": 10
-        }
+        progress = {"percentage": 30, "current_step_number": 3, "total_steps": 10}
 
         current_step = "Downloading firmware..."
 
         # Mock ARQ start time retrieval
-        with patch('dumpyarabot.message_formatting.get_arq_start_time') as mock_get_arq_time:
+        with patch(
+            "dumpyarabot.message_formatting.get_arq_start_time"
+        ) as mock_get_arq_time:
             mock_get_arq_time.return_value = "2023-01-01T12:00:00Z"
 
             result = await format_comprehensive_progress_message(

@@ -1,23 +1,34 @@
 import re
-from datetime import datetime, timezone
 import secrets
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from pydantic import ValidationError
 from rich.console import Console
-from telegram import Chat, Message, ReplyParameters, Update
+from telegram import Chat, Message, Update
 from telegram.ext import ContextTypes
 
-from dumpyarabot import schemas, utils, url_utils
-from dumpyarabot.utils import escape_markdown
-from dumpyarabot.config import (CALLBACK_ACCEPT, CALLBACK_CANCEL_REQUEST,
-                                CALLBACK_REJECT, CALLBACK_SUBMIT_ACCEPTANCE,
-                                CALLBACK_TOGGLE_ALT, CALLBACK_TOGGLE_FORCE,
-                                CALLBACK_TOGGLE_PRIVDUMP, settings)
+from dumpyarabot import schemas, url_utils, utils
+from dumpyarabot.config import (
+    CALLBACK_ACCEPT,
+    CALLBACK_CANCEL_REQUEST,
+    CALLBACK_REJECT,
+    CALLBACK_SUBMIT_ACCEPTANCE,
+    CALLBACK_TOGGLE_ALT,
+    CALLBACK_TOGGLE_FORCE,
+    CALLBACK_TOGGLE_PRIVDUMP,
+    settings,
+)
 from dumpyarabot.message_queue import message_queue
 from dumpyarabot.storage import ReviewStorage
-from dumpyarabot.ui import (ACCEPTANCE_TEMPLATE, REJECTION_TEMPLATE, REVIEW_TEMPLATE, SUBMISSION_TEMPLATE,
-                            create_options_keyboard, create_review_keyboard)
+from dumpyarabot.ui import (
+    ACCEPTANCE_TEMPLATE,
+    REJECTION_TEMPLATE,
+    REVIEW_TEMPLATE,
+    SUBMISSION_TEMPLATE,
+    create_options_keyboard,
+    create_review_keyboard,
+)
 
 console = Console()
 
@@ -29,8 +40,8 @@ def _truncate_message(text: str, max_length: int = 300) -> str:
 
     # Try to truncate at a word boundary
     truncated = text[:max_length]
-    last_space = truncated.rfind(' ')
-    last_newline = truncated.rfind('\n')
+    last_space = truncated.rfind(" ")
+    last_newline = truncated.rfind("\n")
 
     # Use the last word or line boundary, whichever is closer to the end
     boundary = max(last_space, last_newline)
@@ -38,7 +49,6 @@ def _truncate_message(text: str, max_length: int = 300) -> str:
         truncated = text[:boundary]
 
     return truncated + "..."
-
 
 
 async def _cleanup_request(context: ContextTypes.DEFAULT_TYPE, request_id: str) -> None:
@@ -79,7 +89,9 @@ async def handle_request_message(
 
     try:
         # 3. Validate URL using new utility
-        is_valid, validated_url, error_msg = await url_utils.validate_and_normalize_url(url_str)
+        is_valid, validated_url, error_msg = await url_utils.validate_and_normalize_url(
+            url_str
+        )
         if not is_valid:
             raise ValidationError(error_msg)
 
@@ -89,10 +101,14 @@ async def handle_request_message(
         # 5. Send review message to REVIEW_CHAT_ID with Accept/Reject buttons
         raw_message = message.text or ""
         # Remove the URL from the original message since it's already displayed above
-        message_without_url = re.sub(r'https?://[^\s]+', '', raw_message).strip()
+        message_without_url = re.sub(r"https?://[^\s]+", "", raw_message).strip()
         # Remove #request tag and extra whitespace
-        message_without_url = re.sub(r'#request\s*', '', message_without_url).strip()
-        original_message = _truncate_message(message_without_url) if message_without_url else "No additional text"
+        message_without_url = re.sub(r"#request\s*", "", message_without_url).strip()
+        original_message = (
+            _truncate_message(message_without_url)
+            if message_without_url
+            else "No additional text"
+        )
         review_text = REVIEW_TEMPLATE.format(
             username=user.username or user.first_name or str(user.id),
             url=validated_url,
@@ -104,7 +120,12 @@ async def handle_request_message(
         keyboard_dict = create_review_keyboard(request_id).to_dict()
 
         # Create review message via queue with proper message_id handling
-        from dumpyarabot.message_queue import QueuedMessage, MessageType, MessagePriority
+        from dumpyarabot.message_queue import (
+            MessagePriority,
+            MessageType,
+            QueuedMessage,
+        )
+
         review_msg = QueuedMessage(
             type=MessageType.NOTIFICATION,
             priority=MessagePriority.HIGH,
@@ -113,7 +134,11 @@ async def handle_request_message(
             parse_mode=settings.DEFAULT_PARSE_MODE,
             keyboard=keyboard_dict,
             disable_web_page_preview=True,
-            context={"moderated_request": True, "request_id": request_id, "stage": "review"}
+            context={
+                "moderated_request": True,
+                "request_id": request_id,
+                "stage": "review",
+            },
         )
         review_message = await message_queue.publish_and_return_placeholder(review_msg)
 
@@ -126,9 +151,15 @@ async def handle_request_message(
             parse_mode=settings.DEFAULT_PARSE_MODE,
             reply_to_message_id=message.message_id,
             disable_web_page_preview=True,
-            context={"moderated_request": True, "request_id": request_id, "stage": "submission_confirmation"}
+            context={
+                "moderated_request": True,
+                "request_id": request_id,
+                "stage": "submission_confirmation",
+            },
         )
-        submission_message = await message_queue.publish_and_return_placeholder(submission_msg)
+        submission_message = await message_queue.publish_and_return_placeholder(
+            submission_msg
+        )
 
         # 7. Store PendingReview in bot_data (URL as string for Redis compatibility)
         pending_review = schemas.PendingReview(
@@ -152,7 +183,7 @@ async def handle_request_message(
         await message_queue.send_error(
             chat_id=chat.id,
             text="❌ Invalid URL format provided",
-            context={"moderated_request": True, "url": url_str, "error": "invalid_url"}
+            context={"moderated_request": True, "url": url_str, "error": "invalid_url"},
         )
     except Exception as e:
         console.print(f"[red]Error processing request: {e}[/red]")
@@ -160,7 +191,11 @@ async def handle_request_message(
         await message_queue.send_error(
             chat_id=chat.id,
             text="❌ An error occurred while processing your request",
-            context={"moderated_request": True, "url": url_str, "error": "processing_failed"}
+            context={
+                "moderated_request": True,
+                "url": url_str,
+                "error": "processing_failed",
+            },
         )
 
 
@@ -287,7 +322,9 @@ async def _handle_submit_callback(
 ) -> None:
     """Handle submit acceptance -> Process with selected options."""
     request_id = callback_data[len(CALLBACK_SUBMIT_ACCEPTANCE) :]
-    console.print(f"[magenta]=== SUBMIT CALLBACK STARTED for request {request_id} ===[/magenta]")
+    console.print(
+        f"[magenta]=== SUBMIT CALLBACK STARTED for request {request_id} ===[/magenta]"
+    )
 
     pending_review = ReviewStorage.get_pending_review(context, request_id)
     if not pending_review:
@@ -299,7 +336,9 @@ async def _handle_submit_callback(
     try:
         # Create DumpArguments with the selected options
         dump_args = schemas.DumpArguments(
-            url=schemas.AnyHttpUrl(pending_review.url),  # Convert string back to AnyHttpUrl
+            url=schemas.AnyHttpUrl(
+                pending_review.url
+            ),  # Convert string back to AnyHttpUrl
             use_alt_dumper=options_state.alt,
             use_privdump=options_state.privdump,
             initial_message_id=pending_review.original_message_id,
@@ -312,7 +351,7 @@ async def _handle_submit_callback(
             dump_args=dump_args,
             created_at=datetime.now(timezone.utc),
             initial_message_id=pending_review.original_message_id,
-            initial_chat_id=pending_review.original_chat_id
+            initial_chat_id=pending_review.original_chat_id,
         )
 
         # Create enhanced job data with metadata structure
@@ -322,13 +361,15 @@ async def _handle_submit_callback(
                 "chat_id": pending_review.original_chat_id,
                 "message_id": pending_review.original_message_id,
                 "user_id": pending_review.requester_id,
-                "url": pending_review.url
+                "url": pending_review.url,
             }
         }
 
         console.print(f"[blue]Queueing dump job {job.job_id} with metadata...[/blue]")
         job_id = await message_queue.queue_dump_job_with_metadata(enhanced_job_data)
-        console.print(f"[green]Successfully queued dump job {job_id} with metadata[/green]")
+        console.print(
+            f"[green]Successfully queued dump job {job_id} with metadata[/green]"
+        )
 
         # Notify original requester with acceptance message
         if options_state.privdump:
@@ -338,15 +379,23 @@ async def _handle_submit_callback(
         else:
             user_message = ACCEPTANCE_TEMPLATE
 
-        console.print(f"[green]Sending acceptance message to user: {user_message}[/green]")
-        console.print(f"[blue]Chat ID: {pending_review.original_chat_id}, Message ID: {pending_review.original_message_id}[/blue]")
+        console.print(
+            f"[green]Sending acceptance message to user: {user_message}[/green]"
+        )
+        console.print(
+            f"[blue]Chat ID: {pending_review.original_chat_id}, Message ID: {pending_review.original_message_id}[/blue]"
+        )
 
         await message_queue.send_cross_chat(
             chat_id=settings.REVIEW_CHAT_ID,
             text=user_message,
             reply_to_message_id=pending_review.original_message_id,
             reply_to_chat_id=pending_review.original_chat_id,
-            context={"moderated_request": True, "request_id": request_id, "stage": "acceptance"}
+            context={
+                "moderated_request": True,
+                "request_id": request_id,
+                "stage": "acceptance",
+            },
         )
 
         console.print("[green]Acceptance message sent successfully[/green]")
@@ -382,7 +431,7 @@ async def accept_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await message_queue.send_error(
             chat_id=chat.id,
             text="This command can only be used in the review chat",
-            context={"command": "accept", "error": "wrong_chat", "chat_id": chat.id}
+            context={"command": "accept", "error": "wrong_chat", "chat_id": chat.id},
         )
         return
 
@@ -390,11 +439,17 @@ async def accept_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     request_id = None
     options = ""
     # Check if this is a reply to a bot message containing a request ID
-    if message.reply_to_message and message.reply_to_message.from_user and message.reply_to_message.from_user.is_bot:
+    if (
+        message.reply_to_message
+        and message.reply_to_message.from_user
+        and message.reply_to_message.from_user.is_bot
+    ):
         # Extract request_id from the replied message text
         replied_text = message.reply_to_message.text or ""
         # Look for request ID pattern in the replied message
-        request_id_match = re.search(r"Request ID: ([a-f0-9]{8})", replied_text, re.IGNORECASE)
+        request_id_match = re.search(
+            r"Request ID: ([a-f0-9]{8})", replied_text, re.IGNORECASE
+        )
         if request_id_match:
             request_id = request_id_match.group(1)
             # All arguments become the options when using reply mode
@@ -404,7 +459,7 @@ async def accept_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await message_queue.send_error(
                 chat_id=chat.id,
                 text="❌ Could not find a request ID in the replied message",
-                context={"command": "accept", "error": "no_request_id_in_reply"}
+                context={"command": "accept", "error": "no_request_id_in_reply"},
             )
             return
 
@@ -415,7 +470,7 @@ async def accept_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 chat_id=chat.id,
                 text="Usage: `/accept \\[request\\_id\\] \\[options\\]` or reply to a review message with `/accept \\[options\\]`\nOptions: a\\=alt, f\\=force, p\\=privdump",
                 reply_to_message_id=message.message_id,
-                context={"command": "accept", "error": "missing_args"}
+                context={"command": "accept", "error": "missing_args"},
             )
             return
 
@@ -428,19 +483,24 @@ async def accept_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await message_queue.send_error(
             chat_id=chat.id,
             text=f"❌ Request {request_id} not found or expired",
-            context={"command": "accept", "error": "request_not_found", "request_id": request_id}
+            context={
+                "command": "accept",
+                "error": "request_not_found",
+                "request_id": request_id,
+            },
         )
         return
 
     # Parse option flags
     use_alt = "a" in options
-    force = "f" in options
     use_privdump = "p" in options
 
     try:
         # Start dump process with options
         dump_args = schemas.DumpArguments(
-            url=schemas.AnyHttpUrl(pending_review.url),  # Convert string back to AnyHttpUrl
+            url=schemas.AnyHttpUrl(
+                pending_review.url
+            ),  # Convert string back to AnyHttpUrl
             use_alt_dumper=use_alt,
             use_privdump=use_privdump,
             initial_message_id=pending_review.original_message_id,
@@ -453,7 +513,7 @@ async def accept_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             dump_args=dump_args,
             created_at=datetime.now(timezone.utc),
             initial_message_id=pending_review.original_message_id,
-            initial_chat_id=pending_review.original_chat_id
+            initial_chat_id=pending_review.original_chat_id,
         )
 
         # Create enhanced job data with metadata structure
@@ -463,20 +523,26 @@ async def accept_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 "chat_id": pending_review.original_chat_id,
                 "message_id": pending_review.original_message_id,
                 "user_id": pending_review.requester_id,
-                "url": pending_review.url
+                "url": pending_review.url,
             }
         }
 
         console.print(f"[blue]Queueing dump job {job.job_id} with metadata...[/blue]")
         job_id = await message_queue.queue_dump_job_with_metadata(enhanced_job_data)
-        console.print(f"[green]Successfully queued dump job {job_id} with metadata[/green]")
+        console.print(
+            f"[green]Successfully queued dump job {job_id} with metadata[/green]"
+        )
         response_text = f"job queued with ID {job_id}"
 
         await message_queue.send_reply(
             chat_id=chat.id,
             text=f"✅ Request {request_id} accepted and {response_text}",
             reply_to_message_id=message.message_id,
-            context={"command": "accept", "action": "arq_queued", "request_id": request_id}
+            context={
+                "command": "accept",
+                "action": "arq_queued",
+                "request_id": request_id,
+            },
         )
 
         # Notify original requester with acceptance message
@@ -487,15 +553,23 @@ async def accept_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         else:
             user_message = ACCEPTANCE_TEMPLATE
 
-        console.print(f"[green]Sending acceptance message via command to user: {user_message}[/green]")
-        console.print(f"[blue]Chat ID: {pending_review.original_chat_id}, Message ID: {pending_review.original_message_id}[/blue]")
+        console.print(
+            f"[green]Sending acceptance message via command to user: {user_message}[/green]"
+        )
+        console.print(
+            f"[blue]Chat ID: {pending_review.original_chat_id}, Message ID: {pending_review.original_message_id}[/blue]"
+        )
 
         await message_queue.send_cross_chat(
             chat_id=pending_review.original_chat_id,
             text=user_message,
             reply_to_message_id=pending_review.original_message_id,
             reply_to_chat_id=pending_review.original_chat_id,
-            context={"command": "accept", "action": "acceptance_notification", "request_id": request_id}
+            context={
+                "command": "accept",
+                "action": "acceptance_notification",
+                "request_id": request_id,
+            },
         )
 
         console.print("[green]Acceptance message via command sent successfully[/green]")
@@ -506,7 +580,12 @@ async def accept_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await message_queue.send_error(
             chat_id=chat.id,
             text=f"❌ Error processing request {request_id}: {str(e)}",
-            context={"command": "accept", "error": "processing_exception", "request_id": request_id, "exception": str(e)}
+            context={
+                "command": "accept",
+                "error": "processing_exception",
+                "request_id": request_id,
+                "exception": str(e),
+            },
         )
 
     # Clean up request data and submission message
@@ -528,7 +607,7 @@ async def reject_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await message_queue.send_error(
             chat_id=chat.id,
             text="This command can only be used in the review chat",
-            context={"command": "reject", "error": "wrong_chat", "chat_id": chat.id}
+            context={"command": "reject", "error": "wrong_chat", "chat_id": chat.id},
         )
         return
 
@@ -536,11 +615,17 @@ async def reject_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     request_id = None
     reason = "No reason provided"
     # Check if this is a reply to a bot message containing a request ID
-    if message.reply_to_message and message.reply_to_message.from_user and message.reply_to_message.from_user.is_bot:
+    if (
+        message.reply_to_message
+        and message.reply_to_message.from_user
+        and message.reply_to_message.from_user.is_bot
+    ):
         # Extract request_id from the replied message text
         replied_text = message.reply_to_message.text or ""
         # Look for request ID pattern in the replied message
-        request_id_match = re.search(r"Request ID: ([a-f0-9]{8})", replied_text, re.IGNORECASE)
+        request_id_match = re.search(
+            r"Request ID: ([a-f0-9]{8})", replied_text, re.IGNORECASE
+        )
         if request_id_match:
             request_id = request_id_match.group(1)
             # All arguments become the reason when using reply mode
@@ -550,7 +635,7 @@ async def reject_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await message_queue.send_error(
                 chat_id=chat.id,
                 text="❌ Could not find a request ID in the replied message",
-                context={"command": "reject", "error": "no_request_id_in_reply"}
+                context={"command": "reject", "error": "no_request_id_in_reply"},
             )
             return
 
@@ -561,13 +646,15 @@ async def reject_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 chat_id=chat.id,
                 text="Usage: `/reject \\[request\\_id\\] \\[reason\\]` or reply to a review message with `/reject \\[reason\\]`",
                 reply_to_message_id=message.message_id,
-                context={"command": "reject", "error": "missing_args"}
+                context={"command": "reject", "error": "missing_args"},
             )
             return
 
         request_id = context.args[0]
         reason = (
-            " ".join(context.args[1:]) if len(context.args) > 1 else "No reason provided"
+            " ".join(context.args[1:])
+            if len(context.args) > 1
+            else "No reason provided"
         )
 
     # Validate request_id exists
@@ -576,22 +663,32 @@ async def reject_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await message_queue.send_error(
             chat_id=chat.id,
             text=f"❌ Request {request_id} not found or expired",
-            context={"command": "reject", "error": "request_not_found", "request_id": request_id}
+            context={
+                "command": "reject",
+                "error": "request_not_found",
+                "request_id": request_id,
+            },
         )
         return
 
     try:
         # Get admin info
         admin_user = update.effective_user
-        admin_name = admin_user.username or admin_user.first_name or str(admin_user.id) if admin_user else "Unknown"
-
+        admin_name = (
+            admin_user.username or admin_user.first_name or str(admin_user.id)
+            if admin_user
+            else "Unknown"
+        )
 
         # Delete the review message if this was a reply to it
-        if message.reply_to_message and message.reply_to_message.from_user and message.reply_to_message.from_user.is_bot:
+        if (
+            message.reply_to_message
+            and message.reply_to_message.from_user
+            and message.reply_to_message.from_user.is_bot
+        ):
             try:
                 await context.bot.delete_message(
-                    chat_id=chat.id,
-                    message_id=message.reply_to_message.message_id
+                    chat_id=chat.id, message_id=message.reply_to_message.message_id
                 )
             except Exception as e:
                 console.print(f"[yellow]Could not delete review message: {e}[/yellow]")
@@ -599,8 +696,7 @@ async def reject_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         # Delete the reject command message
         try:
             await context.bot.delete_message(
-                chat_id=chat.id,
-                message_id=message.message_id
+                chat_id=chat.id, message_id=message.message_id
             )
         except Exception as e:
             console.print(f"[yellow]Could not delete command message: {e}[/yellow]")
@@ -611,11 +707,18 @@ async def reject_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             text=f"❌ Request {request_id} rejected by @{admin_name}\nReason: {reason}",
             reply_to_message_id=pending_review.original_message_id,
             reply_to_chat_id=pending_review.original_chat_id,
-            context={"command": "reject", "action": "rejection_confirmation", "request_id": request_id, "admin": admin_name}
+            context={
+                "command": "reject",
+                "action": "rejection_confirmation",
+                "request_id": request_id,
+                "admin": admin_name,
+            },
         )
 
         # Log rejection with reason
-        console.print(f"[yellow]Request {request_id} rejected by @{admin_name}: {reason}[/yellow]")
+        console.print(
+            f"[yellow]Request {request_id} rejected by @{admin_name}: {reason}[/yellow]"
+        )
 
         # Notify original requester with rejection message
         await message_queue.send_cross_chat(
@@ -623,7 +726,11 @@ async def reject_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             text=REJECTION_TEMPLATE.format(reason=reason),
             reply_to_message_id=pending_review.original_message_id,
             reply_to_chat_id=pending_review.original_chat_id,
-            context={"command": "reject", "action": "user_notification", "request_id": request_id}
+            context={
+                "command": "reject",
+                "action": "user_notification",
+                "request_id": request_id,
+            },
         )
 
     except Exception as e:
@@ -633,7 +740,12 @@ async def reject_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await message_queue.send_error(
             chat_id=chat.id,
             text=f"❌ Error processing rejection for request {request_id}: {str(e)}",
-            context={"command": "reject", "error": "processing_exception", "request_id": request_id, "exception": str(e)}
+            context={
+                "command": "reject",
+                "error": "processing_exception",
+                "request_id": request_id,
+                "exception": str(e),
+            },
         )
 
     # Clean up request data and submission message
@@ -662,7 +774,11 @@ async def _handle_cancel_callback(
         await message_queue.send_notification(
             chat_id=pending.review_chat_id,
             text=f"🚫 Request {request_id} cancelled by user @{pending.requester_username}",
-            context={"action": "request_cancelled", "request_id": request_id, "user": pending.requester_username}
+            context={
+                "action": "request_cancelled",
+                "request_id": request_id,
+                "user": pending.requester_username,
+            },
         )
 
         # Update submission confirmation message to show cancelled

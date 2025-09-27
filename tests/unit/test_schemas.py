@@ -17,7 +17,7 @@ class TestDumpArguments:
             use_alt_dumper=False,
             use_privdump=False,
             initial_message_id=123,
-            initial_chat_id=456
+            initial_chat_id=456,
         )
 
         assert str(args.url) == "https://example.com/firmware.zip"
@@ -33,7 +33,7 @@ class TestDumpArguments:
             use_alt_dumper=True,
             use_privdump=True,
             initial_message_id=123,
-            initial_chat_id=456
+            initial_chat_id=456,
         )
 
         assert args.use_alt_dumper is True
@@ -47,7 +47,7 @@ class TestDumpArguments:
                 use_alt_dumper=False,
                 use_privdump=False,
                 initial_message_id=123,
-                initial_chat_id=456
+                initial_chat_id=456,
             )
 
 
@@ -61,14 +61,10 @@ class TestDumpJob:
             use_alt_dumper=False,
             use_privdump=False,
             initial_message_id=123,
-            initial_chat_id=456
+            initial_chat_id=456,
         )
 
-        job = DumpJob(
-            job_id="test_123",
-            dump_args=args,
-            add_blacklist=False
-        )
+        job = DumpJob(job_id="test_123", dump_args=args, add_blacklist=False)
 
         assert job.job_id == "test_123"
         assert str(job.dump_args.url) == "https://example.com/firmware.zip"
@@ -81,14 +77,10 @@ class TestDumpJob:
             use_alt_dumper=False,
             use_privdump=False,
             initial_message_id=123,
-            initial_chat_id=456
+            initial_chat_id=456,
         )
 
-        job = DumpJob(
-            job_id="test_123",
-            dump_args=args,
-            add_blacklist=True
-        )
+        job = DumpJob(job_id="test_123", dump_args=args, add_blacklist=True)
 
         assert job.add_blacklist is True
 
@@ -100,11 +92,7 @@ class TestJobMetadata:
         """Test creating valid JobMetadata."""
         metadata = JobMetadata(
             job_type="dump",
-            telegram_context={
-                "chat_id": 123456,
-                "message_id": 789,
-                "user_id": 999
-            }
+            telegram_context={"chat_id": 123456, "message_id": 789, "user_id": 999},
         )
 
         assert metadata.job_type == "dump"

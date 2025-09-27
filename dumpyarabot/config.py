@@ -1,10 +1,10 @@
-from pydantic import AnyHttpUrl
+from typing import List, Tuple
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     TELEGRAM_BOT_TOKEN: str
-
 
     SUDO_USERS: list[int] = []
 
@@ -21,8 +21,7 @@ class Settings(BaseSettings):
     # Telegram formatting configuration
     DEFAULT_PARSE_MODE: str = "Markdown"
 
-
-    model_config = SettingsConfigDict(env_file=".env", extra='ignore')
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 
 settings = Settings()
@@ -41,21 +40,21 @@ CALLBACK_CANCEL_REQUEST = "cancel_req_"
 USER_COMMANDS = [
     ("dump", "Start a firmware dump with URL and options"),
     ("blacklist", "Add a URL to the blacklist"),
-    ("help", "Show available commands and usage")
+    ("help", "Show available commands and usage"),
 ]
 
 INTERNAL_COMMANDS = [
     ("cancel", "Cancel a running dump job"),
     ("accept", "Accept a pending dump request"),
     ("reject", "Reject a pending dump request"),
-    ("mockup", "Test the moderated request flow")
+    ("mockup", "Test the moderated request flow"),
 ]
 
 ADMIN_COMMANDS = [
     ("restart", "Restart the bot"),
 ]
 
-EMPTY_COMMANDS = []
+EMPTY_COMMANDS: List[Tuple[str, str]] = []
 
 # All commands combined
 ALL_COMMANDS = USER_COMMANDS + INTERNAL_COMMANDS + ADMIN_COMMANDS
@@ -64,4 +63,3 @@ ALL_COMMANDS = USER_COMMANDS + INTERNAL_COMMANDS + ADMIN_COMMANDS
 RESTART_CONFIRMATION_TIMEOUT = 30  # seconds
 CALLBACK_RESTART_CONFIRM = "restart_confirm_"
 CALLBACK_RESTART_CANCEL = "restart_cancel_"
-

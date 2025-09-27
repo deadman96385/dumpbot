@@ -3,7 +3,7 @@
 import os
 import shutil
 from pathlib import Path
-from typing import List, Optional, Union, Iterator, Tuple
+from typing import List, Optional, Tuple, Union
 
 from rich.console import Console
 
@@ -34,9 +34,7 @@ def expand_glob_paths(base_dir: Union[str, Path], pattern: str) -> List[Path]:
 
 
 def find_files_by_pattern(
-    base_dir: Union[str, Path],
-    patterns: List[str],
-    recursive: bool = True
+    base_dir: Union[str, Path], patterns: List[str], recursive: bool = True
 ) -> List[Path]:
     """
     Find files matching any of the given patterns.
@@ -50,7 +48,7 @@ def find_files_by_pattern(
         List of file paths matching any pattern
     """
     base_path = Path(base_dir)
-    found_files = []
+    found_files: List[Path] = []
 
     for pattern in patterns:
         if recursive:
@@ -75,9 +73,7 @@ def find_files_by_pattern(
 
 
 def find_first_file_by_patterns(
-    base_dir: Union[str, Path],
-    patterns: List[str],
-    recursive: bool = True
+    base_dir: Union[str, Path], patterns: List[str], recursive: bool = True
 ) -> Optional[Path]:
     """
     Find the first file matching any of the given patterns.
@@ -164,8 +160,8 @@ def get_file_size_formatted(file_path: Union[str, Path]) -> str:
         Formatted file size string
     """
     try:
-        size = os.path.getsize(file_path)
-        for unit in ['B', 'KB', 'MB', 'GB']:
+        size: float = os.path.getsize(file_path)
+        for unit in ["B", "KB", "MB", "GB"]:
             if size < 1024.0:
                 return f"{size:.1f} {unit}"
             size /= 1024.0
@@ -228,8 +224,7 @@ def ensure_directory_exists(dir_path: Union[str, Path]) -> Path:
 
 
 def get_latest_file_in_directory(
-    directory: Union[str, Path],
-    pattern: str = "*"
+    directory: Union[str, Path], pattern: str = "*"
 ) -> Optional[Path]:
     """
     Get the most recently modified file in a directory.
@@ -277,7 +272,7 @@ def clean_filename(filename: str, replacement: str = "_") -> str:
         cleaned = cleaned.replace(char, replacement)
 
     # Remove leading/trailing dots and spaces
-    cleaned = cleaned.strip('. ')
+    cleaned = cleaned.strip(". ")
 
     # Ensure we don't end up with an empty filename
     if not cleaned:
@@ -287,8 +282,7 @@ def clean_filename(filename: str, replacement: str = "_") -> str:
 
 
 def get_relative_path_list(
-    base_dir: Union[str, Path],
-    exclude_patterns: Optional[List[str]] = None
+    base_dir: Union[str, Path], exclude_patterns: Optional[List[str]] = None
 ) -> List[str]:
     """
     Get a list of all files relative to base directory.
@@ -333,8 +327,7 @@ def get_relative_path_list(
 
 
 def partition_files_by_type(
-    files: List[Path],
-    extensions: Optional[List[str]] = None
+    files: List[Path], extensions: Optional[List[str]] = None
 ) -> Tuple[List[Path], List[Path]]:
     """
     Partition files into two groups based on file extensions.
@@ -367,7 +360,7 @@ def partition_files_by_type(
 def create_file_manifest(
     base_dir: Union[str, Path],
     output_file: Union[str, Path],
-    exclude_patterns: Optional[List[str]] = None
+    exclude_patterns: Optional[List[str]] = None,
 ) -> bool:
     """
     Create a file manifest listing all files in a directory.
@@ -383,11 +376,13 @@ def create_file_manifest(
     try:
         file_list = get_relative_path_list(base_dir, exclude_patterns)
 
-        with open(output_file, 'w') as f:
+        with open(output_file, "w") as f:
             for file_path in file_list:
                 f.write(f"{file_path}\n")
 
-        console.print(f"[green]Created file manifest with {len(file_list)} files[/green]")
+        console.print(
+            f"[green]Created file manifest with {len(file_list)} files[/green]"
+        )
         return True
     except Exception as e:
         console.print(f"[red]Failed to create file manifest: {e}[/red]")

@@ -1,10 +1,15 @@
 """
 Unit tests for dumpyarabot URL utilities.
 """
-import pytest
-from unittest.mock import patch, AsyncMock
+from unittest.mock import AsyncMock, patch
 
-from dumpyarabot.url_utils import validate_and_normalize_url, check_url_accessibility, parse_url_components
+import pytest
+
+from dumpyarabot.url_utils import (
+    check_url_accessibility,
+    parse_url_components,
+    validate_and_normalize_url,
+)
 
 
 @pytest.mark.asyncio
@@ -13,7 +18,9 @@ class TestValidateAndNormalizeUrl:
 
     async def test_validate_valid_http_url(self):
         """Test validation of valid HTTP URL."""
-        is_valid, normalized_url, error_msg = await validate_and_normalize_url("http://example.com/file.zip")
+        is_valid, normalized_url, error_msg = await validate_and_normalize_url(
+            "http://example.com/file.zip"
+        )
 
         assert is_valid is True
         assert normalized_url == "http://example.com/file.zip"
@@ -21,7 +28,9 @@ class TestValidateAndNormalizeUrl:
 
     async def test_validate_valid_https_url(self):
         """Test validation of valid HTTPS URL."""
-        is_valid, normalized_url, error_msg = await validate_and_normalize_url("https://example.com/file.zip")
+        is_valid, normalized_url, error_msg = await validate_and_normalize_url(
+            "https://example.com/file.zip"
+        )
 
         assert is_valid is True
         assert normalized_url == "https://example.com/file.zip"
@@ -29,7 +38,9 @@ class TestValidateAndNormalizeUrl:
 
     async def test_validate_invalid_url(self):
         """Test validation of invalid URL."""
-        is_valid, normalized_url, error_msg = await validate_and_normalize_url("not-a-valid-url")
+        is_valid, normalized_url, error_msg = await validate_and_normalize_url(
+            "not-a-valid-url"
+        )
 
         assert is_valid is False
         assert normalized_url is None
@@ -38,7 +49,9 @@ class TestValidateAndNormalizeUrl:
 
     async def test_validate_url_without_scheme(self):
         """Test validation of URL without scheme."""
-        is_valid, normalized_url, error_msg = await validate_and_normalize_url("example.com/file.zip")
+        is_valid, normalized_url, error_msg = await validate_and_normalize_url(
+            "example.com/file.zip"
+        )
 
         assert is_valid is False
         assert normalized_url is None
@@ -49,7 +62,7 @@ class TestValidateAndNormalizeUrl:
 class TestCheckUrlAccessibility:
     """Test cases for check_url_accessibility function."""
 
-    @patch('dumpyarabot.url_utils.httpx.AsyncClient')
+    @patch("dumpyarabot.url_utils.httpx.AsyncClient")
     async def test_check_accessible_url(self, mock_client_class):
         """Test checking accessibility of accessible URL."""
         # Mock the client and response
@@ -62,9 +75,11 @@ class TestCheckUrlAccessibility:
         result = await check_url_accessibility("https://example.com/file.zip")
 
         assert result is True
-        mock_client.head.assert_called_once_with("https://example.com/file.zip", timeout=10, follow_redirects=True)
+        mock_client.head.assert_called_once_with(
+            "https://example.com/file.zip", timeout=10, follow_redirects=True
+        )
 
-    @patch('dumpyarabot.url_utils.httpx.AsyncClient')
+    @patch("dumpyarabot.url_utils.httpx.AsyncClient")
     async def test_check_inaccessible_url(self, mock_client_class):
         """Test checking accessibility of inaccessible URL."""
         # Mock the client and response
@@ -78,7 +93,7 @@ class TestCheckUrlAccessibility:
 
         assert result is False
 
-    @patch('dumpyarabot.url_utils.httpx.AsyncClient')
+    @patch("dumpyarabot.url_utils.httpx.AsyncClient")
     async def test_check_url_with_exception(self, mock_client_class):
         """Test checking accessibility when exception occurs."""
         # Mock the client to raise an exception

@@ -1,10 +1,8 @@
 from datetime import datetime
-from datetime import datetime
 from enum import Enum
-from typing import Dict, List, Optional, Any
+from typing import Any, Dict, List, Optional
 
 from pydantic import AnyHttpUrl, BaseModel
-
 
 
 class DumpArguments(BaseModel):
@@ -41,19 +39,19 @@ class MockupState(BaseModel):
     original_command_message_id: int = 0
 
 
-
-
 class JobStatus(str, Enum):
     """Status of a dump job in the worker queue."""
-    QUEUED = "queued"         # Job is waiting to be processed
-    PROCESSING = "processing" # Job is currently being processed by a worker
-    COMPLETED = "completed"   # Job completed successfully
-    FAILED = "failed"         # Job failed with errors
-    CANCELLED = "cancelled"   # Job was cancelled by user/admin
+
+    QUEUED = "queued"  # Job is waiting to be processed
+    PROCESSING = "processing"  # Job is currently being processed by a worker
+    COMPLETED = "completed"  # Job completed successfully
+    FAILED = "failed"  # Job failed with errors
+    CANCELLED = "cancelled"  # Job was cancelled by user/admin
 
 
 class JobProgress(BaseModel):
     """Progress information for a dump job."""
+
     current_step: str
     total_steps: int
     current_step_number: int
@@ -64,8 +62,11 @@ class JobProgress(BaseModel):
 
 class JobMetadata(BaseModel):
     """Metadata for ARQ job tracking and rich status displays."""
+
     job_type: str = "dump"
-    telegram_context: Optional[Dict[str, Any]] = None  # chat_id, message_id, user_id, url
+    telegram_context: Optional[
+        Dict[str, Any]
+    ] = None  # chat_id, message_id, user_id, url
     progress_history: List[Dict[str, Any]] = []  # List of progress updates
     device_info: Optional[Dict[str, Any]] = None  # Populated after property extraction
     repository: Optional[Dict[str, Any]] = None  # Populated on successful completion
@@ -77,6 +78,7 @@ class JobMetadata(BaseModel):
 
 class DumpJob(BaseModel):
     """Schema for dump jobs in the worker queue."""
+
     job_id: str
     dump_args: DumpArguments
     add_blacklist: bool = False
@@ -89,10 +91,10 @@ class DumpJob(BaseModel):
     result_data: Optional[Dict[str, Any]] = None  # GitLab URLs, build info, etc.
     error_details: Optional[str] = None
     initial_message_id: Optional[int] = None  # Track the initial message for editing
-    initial_chat_id: Optional[int] = None     # Track chat for cross-chat support
-    metadata: Optional[JobMetadata] = None   # Rich metadata for ARQ job tracking
+    initial_chat_id: Optional[int] = None  # Track chat for cross-chat support
+    metadata: Optional[JobMetadata] = None  # Rich metadata for ARQ job tracking
 
-    def __init__(self, **data):
+    def __init__(self, **data: Any) -> None:
         if "created_at" not in data:
             data["created_at"] = datetime.utcnow()
         super().__init__(**data)

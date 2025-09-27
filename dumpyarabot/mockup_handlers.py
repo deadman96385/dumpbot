@@ -7,20 +7,28 @@ from telegram.ext import ContextTypes
 if TYPE_CHECKING:
     from telegram import InlineKeyboardMarkup
 
-from dumpyarabot.config import (CALLBACK_ACCEPT, CALLBACK_CANCEL_REQUEST,
-                                CALLBACK_REJECT,
-                                CALLBACK_RESTART_CANCEL, CALLBACK_RESTART_CONFIRM,
-                                CALLBACK_SUBMIT_ACCEPTANCE, CALLBACK_TOGGLE_ALT,
-                                CALLBACK_TOGGLE_FORCE, CALLBACK_TOGGLE_PRIVDUMP)
-from dumpyarabot.schemas import AcceptOptionsState, MockupState, PendingReview
-from dumpyarabot.storage import ReviewStorage
-from dumpyarabot.ui import (REVIEW_TEMPLATE, create_options_keyboard,
-                            create_review_keyboard)
-from dumpyarabot.utils import generate_request_id
-from dumpyarabot.config import settings
-
 # Import main handlers to avoid duplication
 from dumpyarabot import moderated_handlers
+from dumpyarabot.config import (
+    CALLBACK_ACCEPT,
+    CALLBACK_CANCEL_REQUEST,
+    CALLBACK_REJECT,
+    CALLBACK_RESTART_CANCEL,
+    CALLBACK_RESTART_CONFIRM,
+    CALLBACK_SUBMIT_ACCEPTANCE,
+    CALLBACK_TOGGLE_ALT,
+    CALLBACK_TOGGLE_FORCE,
+    CALLBACK_TOGGLE_PRIVDUMP,
+    settings,
+)
+from dumpyarabot.schemas import AcceptOptionsState, MockupState, PendingReview
+from dumpyarabot.storage import ReviewStorage
+from dumpyarabot.ui import (
+    REVIEW_TEMPLATE,
+    create_options_keyboard,
+    create_review_keyboard,
+)
+from dumpyarabot.utils import generate_request_id
 
 # Mockup-specific callback prefixes for reset/back/delete functionality
 CALLBACK_MOCKUP_RESET = "mockup_reset_"
@@ -69,7 +77,10 @@ FUNNY_MESSAGES = [
 
 
 async def _renew_expired_mockup_session(
-    context: ContextTypes.DEFAULT_TYPE, request_id: str, controls_message_id: int, chat_id: int
+    context: ContextTypes.DEFAULT_TYPE,
+    request_id: str,
+    controls_message_id: int,
+    chat_id: int,
 ) -> tuple[PendingReview, MockupState]:
     """Seamlessly renew an expired mockup session by updating existing review message."""
     fake_username = random.choice(FUNNY_USERNAMES)
@@ -147,7 +158,10 @@ async def mockup_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     # Create production-like review message
     review_text = REVIEW_TEMPLATE.format(
-        username=fake_username, url=fake_url, request_id=request_id, original_message=fake_message
+        username=fake_username,
+        url=fake_url,
+        request_id=request_id,
+        original_message=fake_message,
     )
 
     # Send the first message (production-like review message) via queue
@@ -557,18 +571,27 @@ async def handle_enhanced_callback_query(
     elif callback_data.startswith(CALLBACK_REJECT):
         await _handle_reject_callback_with_mockup_state(query, context, callback_data)
     elif callback_data.startswith(CALLBACK_TOGGLE_ALT):
-        await _handle_toggle_callback_with_mockup_state(query, context, callback_data, "alt")
+        await _handle_toggle_callback_with_mockup_state(
+            query, context, callback_data, "alt"
+        )
     elif callback_data.startswith(CALLBACK_TOGGLE_FORCE):
-        await _handle_toggle_callback_with_mockup_state(query, context, callback_data, "force")
+        await _handle_toggle_callback_with_mockup_state(
+            query, context, callback_data, "force"
+        )
     elif callback_data.startswith(CALLBACK_TOGGLE_PRIVDUMP):
-        await _handle_toggle_callback_with_mockup_state(query, context, callback_data, "privdump")
+        await _handle_toggle_callback_with_mockup_state(
+            query, context, callback_data, "privdump"
+        )
     elif callback_data.startswith(CALLBACK_CANCEL_REQUEST):
         await _handle_cancel_callback_with_mockup_state(query, context, callback_data)
     elif callback_data.startswith(CALLBACK_SUBMIT_ACCEPTANCE):
         await _handle_submit_callback_with_mockup_state(query, context, callback_data)
-    elif callback_data.startswith(CALLBACK_RESTART_CONFIRM) or callback_data.startswith(CALLBACK_RESTART_CANCEL):
+    elif callback_data.startswith(CALLBACK_RESTART_CONFIRM) or callback_data.startswith(
+        CALLBACK_RESTART_CANCEL
+    ):
         # Import restart handler here to avoid circular imports
         from dumpyarabot.handlers import handle_restart_callback
+
         await handle_restart_callback(update, context)
 
 
@@ -610,10 +633,13 @@ async def _handle_submit_callback_with_mockup_state(
 ) -> None:
     """Handle submit acceptance with mockup state management."""
     from rich.console import Console
+
     console = Console()
 
     request_id = callback_data[len(CALLBACK_SUBMIT_ACCEPTANCE) :]
-    console.print(f"[magenta]=== ENHANCED SUBMIT CALLBACK for request {request_id} ===[/magenta]")
+    console.print(
+        f"[magenta]=== ENHANCED SUBMIT CALLBACK for request {request_id} ===[/magenta]"
+    )
 
     # Check if this is a mockup request
     mockup_state = ReviewStorage.get_mockup_state(context, request_id)
@@ -622,7 +648,11 @@ async def _handle_submit_callback_with_mockup_state(
     # IMPORTANT: Only treat as mockup if it has BOTH mockup_state AND was created by /mockup command
     # Don't let auto-recovery create mockup state for real requests
     pending_review = ReviewStorage.get_pending_review(context, request_id)
-    is_real_mockup = mockup_state is not None and pending_review is not None and pending_review.original_chat_id == pending_review.review_chat_id
+    is_real_mockup = (
+        mockup_state is not None
+        and pending_review is not None
+        and pending_review.original_chat_id == pending_review.review_chat_id
+    )
     console.print(f"[blue]Is real mockup (same chat): {is_real_mockup}[/blue]")
 
     if mockup_state and is_real_mockup:
@@ -648,7 +678,9 @@ async def _handle_submit_callback_with_mockup_state(
             options_summary.append("✅ Private Dump")
 
         options_text = (
-            "\n".join(options_summary) if options_summary else "No special options selected"
+            "\n".join(options_summary)
+            if options_summary
+            else "No special options selected"
         )
 
         await query.edit_message_text(
@@ -656,7 +688,9 @@ async def _handle_submit_callback_with_mockup_state(
         )
     else:
         # For real requests, delegate to main handler
-        console.print("[cyan]Delegating to real moderated_handlers._handle_submit_callback[/cyan]")
+        console.print(
+            "[cyan]Delegating to real moderated_handlers._handle_submit_callback[/cyan]"
+        )
         await moderated_handlers._handle_submit_callback(query, context, callback_data)
 
 
@@ -666,7 +700,9 @@ async def _handle_toggle_callback_with_mockup_state(
     """Handle option toggles with mockup state preservation."""
     # Delegate to main handler without any special mockup state handling
     # The main handler should not cause cleanup for mockup requests
-    await moderated_handlers._handle_toggle_callback(query, context, callback_data, option)
+    await moderated_handlers._handle_toggle_callback(
+        query, context, callback_data, option
+    )
 
 
 async def _handle_cancel_callback_with_mockup_state(
@@ -690,5 +726,3 @@ async def _handle_cancel_callback_with_mockup_state(
     else:
         # For real requests, delegate to main handler
         await moderated_handlers._handle_cancel_callback(query, context, callback_data)
-
-

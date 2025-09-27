@@ -1,8 +1,6 @@
 """
 Unit tests for dumpyarabot utility functions.
 """
-import pytest
-from unittest.mock import patch, AsyncMock
 
 from dumpyarabot.utils import escape_markdown, generate_request_id
 

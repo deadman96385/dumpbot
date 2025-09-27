@@ -1,8 +1,9 @@
 """Message formatting utilities for consistent Telegram messaging."""
 
 from datetime import datetime, timezone
-from typing import Dict, Any, Optional, List
+from typing import Any, Dict, List, Optional
 
+from dumpyarabot.schemas import DumpJob
 from dumpyarabot.utils import escape_markdown
 
 
@@ -30,9 +31,7 @@ async def get_arq_start_time(arq_job_id: str) -> Optional[str]:
 
 
 def generate_progress_bar(
-    progress: Optional[Dict[str, Any]],
-    width: int = 10,
-    style: str = "unicode"
+    progress: Optional[Dict[str, Any]], width: int = 10, style: str = "unicode"
 ) -> str:
     """
     Generate a visual progress bar from progress data with enhanced styling options.
@@ -64,7 +63,9 @@ def generate_progress_bar(
     # Generate the visual progress bar
     bar = _create_progress_bar(percentage, width, style)
 
-    return f"📊 *Progress:* [{bar}] {percentage:.0f}% (Step {current_step}/{total_steps})"
+    return (
+        f"📊 *Progress:* [{bar}] {percentage:.0f}% (Step {current_step}/{total_steps})"
+    )
 
 
 def _create_progress_bar(percentage: float, width: int, style: str) -> str:
@@ -125,8 +126,7 @@ def _create_empty_bar(width: int, style: str) -> str:
 
 
 def calculate_elapsed_time(
-    started_at_str: Optional[str],
-    fallback_started_at: Optional[str] = None
+    started_at_str: Optional[str], fallback_started_at: Optional[str] = None
 ) -> str:
     """
     Calculate elapsed time since a job started with fallback support.
@@ -158,7 +158,7 @@ def calculate_elapsed_time(
 
     try:
         # Simple ISO format parsing - handles most common cases
-        started_at = datetime.fromisoformat(time_str.replace('Z', '+00:00'))
+        started_at = datetime.fromisoformat(time_str.replace("Z", "+00:00"))
         elapsed = datetime.now(timezone.utc) - started_at
         total_seconds = max(0, int(elapsed.total_seconds()))
 
@@ -190,11 +190,13 @@ def format_url_display(url: str, max_length: int = 60) -> str:
     """
     url_str = str(url)
     if len(url_str) > max_length:
-        return url_str[:max_length - 3] + "..."
+        return url_str[: max_length - 3] + "..."
     return url_str
 
 
-def format_dump_options(dump_args: Dict[str, Any], add_blacklist: bool = False) -> List[str]:
+def format_dump_options(
+    dump_args: Dict[str, Any], add_blacklist: bool = False
+) -> List[str]:
     """
     Format dump options for display.
 
@@ -221,7 +223,7 @@ async def format_comprehensive_progress_message(
     job_data: Dict[str, Any],
     current_step: str,
     progress: Optional[Dict[str, Any]] = None,
-    metadata: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None,
 ) -> str:
     """
     Format a comprehensive progress message with all status information.
@@ -275,8 +277,7 @@ async def format_comprehensive_progress_message(
 
     # Format options
     options = format_dump_options(
-        job_data["dump_args"],
-        job_data.get("add_blacklist", False)
+        job_data["dump_args"], job_data.get("add_blacklist", False)
     )
 
     if options:
@@ -291,7 +292,7 @@ async def format_comprehensive_progress_message(
     if metadata and metadata.get("device_info"):
         device_info = metadata["device_info"]
         message += f"\n📱 *Device:* {device_info.get('brand', 'Unknown')} {device_info.get('codename', 'Unknown')}"
-        if device_info.get('android_version'):
+        if device_info.get("android_version"):
             message += f" (Android {device_info['android_version']})"
         message += "\n"
 
@@ -311,7 +312,12 @@ async def format_comprehensive_progress_message(
                     message += f"🔍 *Fingerprint:* `{fingerprint}`\n"
 
     # Enhanced error display (no duplication)
-    if progress and progress.get("error_message") and metadata and metadata.get("error_context"):
+    if (
+        progress
+        and progress.get("error_message")
+        and metadata
+        and metadata.get("error_context")
+    ):
         error_ctx = metadata["error_context"]
         message += f"\n❌ *Error:* {escape_markdown(error_ctx.get('message', 'Unknown error'))}\n"
         message += f"🔍 *Failed at:* {error_ctx.get('current_step', 'Unknown step')}\n"
@@ -319,7 +325,7 @@ async def format_comprehensive_progress_message(
         if error_ctx.get("last_successful_step"):
             message += f"📊 *Last successful:* {error_ctx['last_successful_step']}\n"
     elif progress and progress.get("error_message"):
-        error_display = progress['error_message']
+        error_display = progress["error_message"]
         message += f"❌ *Error:* {error_display}\n"
 
     return message
@@ -329,7 +335,7 @@ def format_build_summary_info(
     job_name: str,
     build_number: int,
     result: Optional[str],
-    timestamp_str: Optional[str] = None
+    timestamp_str: Optional[str] = None,
 ) -> str:
     """
     Format build summary information for display.
@@ -349,7 +355,7 @@ def format_build_summary_info(
         "FAILURE": "❌",
         "UNSTABLE": "⚠️",
         "ABORTED": "⏹️",
-    }.get(result, "❓")
+    }.get(result or "", "❓")
 
     # Build summary parts
     escaped_job_name = escape_markdown(job_name)
@@ -358,7 +364,7 @@ def format_build_summary_info(
     summary_parts = [
         f"**Job:** `{escaped_job_name}`",
         f"**Build:** `#{escaped_build_number}`",
-        f"**Result:** {result_emoji} {result or 'Unknown'}"
+        f"**Result:** {result_emoji} {result or 'Unknown'}",
     ]
 
     if timestamp_str:
@@ -391,9 +397,7 @@ def format_device_properties_message(device_props: Dict[str, Any]) -> str:
 
 
 def format_channel_notification_message(
-    device_props: Dict[str, Any],
-    repo_url: str,
-    download_url: Optional[str] = None
+    device_props: Dict[str, Any], repo_url: str, download_url: Optional[str] = None
 ) -> str:
     """
     Format a channel notification message.
@@ -419,7 +423,7 @@ def format_error_message(
     error_type: str,
     error_details: str,
     job_id: Optional[str] = None,
-    context: Optional[Dict[str, Any]] = None
+    context: Optional[Dict[str, Any]] = None,
 ) -> str:
     """
     Format an error message with consistent styling.
@@ -450,9 +454,7 @@ def format_error_message(
 
 
 def format_success_message(
-    title: str,
-    details: Optional[str] = None,
-    links: Optional[Dict[str, str]] = None
+    title: str, details: Optional[str] = None, links: Optional[Dict[str, str]] = None
 ) -> str:
     """
     Format a success message with consistent styling.
@@ -481,7 +483,7 @@ def format_status_update_message(
     status: str,
     job_id: str,
     details: Optional[str] = None,
-    progress_percent: Optional[float] = None
+    progress_percent: Optional[float] = None,
 ) -> str:
     """
     Format a status update message.
@@ -509,7 +511,11 @@ def format_status_update_message(
     message += f"🆔 *Job ID:* `{job_id}`\n"
 
     if progress_percent is not None:
-        progress_data = {"percentage": progress_percent, "current_step_number": 0, "total_steps": 10}
+        progress_data = {
+            "percentage": progress_percent,
+            "current_step_number": 0,
+            "total_steps": 10,
+        }
         progress_bar = generate_progress_bar(progress_data)
         message += f"{progress_bar}\n"
 
@@ -530,7 +536,7 @@ async def format_enhanced_job_status(job: "DumpJob") -> str:
         "completed": "✅",
         "failed": "❌",
         "running": "🚀",
-        "cancelled": "⏹️"
+        "cancelled": "⏹️",
     }.get(job.status, "📋")
 
     text += f"{status_emoji} *Status:* {job.status.title()}\n"
@@ -539,7 +545,7 @@ async def format_enhanced_job_status(job: "DumpJob") -> str:
     if metadata.get("device_info"):
         device = metadata["device_info"]
         text += f"📱 *Device:* {device.get('brand', 'Unknown')} {device.get('codename', 'Unknown')}\n"
-        if device.get('android_version'):
+        if device.get("android_version"):
             text += f"🤖 *Android:* {device['android_version']}\n"
 
     # Repository if completed
@@ -550,8 +556,13 @@ async def format_enhanced_job_status(job: "DumpJob") -> str:
     # Progress info
     if job.progress:
         progress = job.progress
-        text += f"📊 *Progress:* {progress.get('percentage', 0):.1f}%\n"
-        text += f"📝 *Current Step:* {progress.get('current_step', 'Unknown')}\n"
+        if isinstance(progress, dict):
+            text += f"📊 *Progress:* {progress.get('percentage', 0):.1f}%\n"
+            text += f"📝 *Current Step:* {progress.get('current_step', 'Unknown')}\n"
+        else:
+            # JobProgress object
+            text += f"📊 *Progress:* {progress.percentage:.1f}%\n"
+            text += f"📝 *Current Step:* {progress.current_step}\n"
 
     # Error details
     if metadata.get("error_context"):
@@ -568,7 +579,9 @@ async def format_enhanced_job_status(job: "DumpJob") -> str:
     return text
 
 
-async def format_jobs_overview(active_jobs: List["DumpJob"], recent_jobs: List["DumpJob"]) -> str:
+async def format_jobs_overview(
+    active_jobs: List["DumpJob"], recent_jobs: List["DumpJob"]
+) -> str:
     """Format active and recent jobs overview."""
     text = "📊 *Job Status Overview*\n\n"
 
@@ -579,9 +592,17 @@ async def format_jobs_overview(active_jobs: List["DumpJob"], recent_jobs: List["
             metadata = job.result_data.get("metadata", {}) if job.result_data else {}
             url = metadata.get("telegram_context", {}).get("url", "Unknown URL")
 
-            progress = job.progress or {}
-            status = progress.get("current_step", "Initializing")
-            percentage = progress.get("percentage", 0)
+            progress = job.progress
+            if isinstance(progress, dict):
+                status = progress.get("current_step", "Initializing")
+                percentage = progress.get("percentage", 0)
+            elif progress:
+                # JobProgress object
+                status = progress.current_step
+                percentage = progress.percentage
+            else:
+                status = "Initializing"
+                percentage = 0
 
             # Truncate URL for display
             short_url = url[:50] + "..." if len(url) > 50 else url
@@ -600,13 +621,14 @@ async def format_jobs_overview(active_jobs: List["DumpJob"], recent_jobs: List["
             device_name = "Unknown Device"
             if metadata.get("device_info"):
                 device = metadata["device_info"]
-                device_name = f"{device.get('brand', '')} {device.get('codename', '')}".strip() or "Unknown Device"
+                device_name = (
+                    f"{device.get('brand', '')} {device.get('codename', '')}".strip()
+                    or "Unknown Device"
+                )
 
-            status_emoji = {
-                "completed": "✅",
-                "failed": "❌",
-                "cancelled": "🛑"
-            }.get(job.status, "📋")
+            status_emoji = {"completed": "✅", "failed": "❌", "cancelled": "🛑"}.get(
+                job.status, "📋"
+            )
 
             # Calculate time ago
             end_time = job.completed_at or job.started_at
@@ -617,12 +639,13 @@ async def format_jobs_overview(active_jobs: List["DumpJob"], recent_jobs: List["
     return text
 
 
-def format_time_ago(timestamp) -> str:
+def format_time_ago(timestamp: Optional[datetime]) -> str:
     """Format a timestamp as time ago."""
     if not timestamp:
         return "Unknown"
 
     from datetime import datetime, timezone
+
     now = datetime.now(timezone.utc)
     diff = now - timestamp
 

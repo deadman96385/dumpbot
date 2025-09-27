@@ -14,8 +14,8 @@ Examples:
 """
 
 import asyncio
-import sys
 import signal
+import sys
 from typing import Optional
 
 import arq
@@ -48,13 +48,15 @@ class ARQWorkerManager:
                 keep_result=WorkerSettings.keep_result,
                 max_tries=WorkerSettings.max_tries,
                 health_check_interval=WorkerSettings.health_check_interval,
-                queue_name=WorkerSettings.queue_name
+                queue_name=WorkerSettings.queue_name,
             )
 
             # Set up signal handlers for graceful shutdown
             self._setup_signal_handlers()
 
-            console.print(f"[blue]Worker {self.worker_name} started and waiting for jobs...[/blue]")
+            console.print(
+                f"[blue]Worker {self.worker_name} started and waiting for jobs...[/blue]"
+            )
 
             # Run worker until shutdown
             await self.worker.async_run()
@@ -65,8 +67,11 @@ class ARQWorkerManager:
 
     def _setup_signal_handlers(self):
         """Set up signal handlers for graceful shutdown."""
+
         def signal_handler(signum, frame):
-            console.print(f"[yellow]Received signal {signum}, initiating graceful shutdown...[/yellow]")
+            console.print(
+                f"[yellow]Received signal {signum}, initiating graceful shutdown...[/yellow]"
+            )
             self.shutdown_event.set()
 
         signal.signal(signal.SIGINT, signal_handler)
