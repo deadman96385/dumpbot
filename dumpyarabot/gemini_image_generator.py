@@ -1140,8 +1140,23 @@ class GeminiImageGenerator:
 
                 # Create a fallback using actual Gemini text response if available
                 def escape_markdown_basic(text: str) -> str:
-                    """Escape basic problematic characters for Telegram Markdown."""
-                    return text.replace("_", "\\_").replace("*", "\\*")
+                    """Escape problematic characters for Telegram legacy Markdown."""
+                    # Escape legacy Markdown special characters
+                    return (text.replace("\\", "\\\\")  # Backslash first
+                            .replace("*", "\\*")
+                            .replace("_", "\\_")
+                            .replace("`", "\\`")
+                            .replace("{", "\\{")
+                            .replace("}", "\\}")
+                            .replace("[", "\\[")
+                            .replace("]", "\\]")
+                            .replace("(", "\\(")
+                            .replace(")", "\\)")
+                            .replace("#", "\\#")
+                            .replace("+", "\\+")
+                            .replace("-", "\\-")
+                            .replace(".", "\\.")
+                            .replace("!", "\\!"))
 
                 device_brand = escape_markdown_basic(context["device_brand"])
                 error_category = escape_markdown_basic(context["error_category"])
@@ -1163,8 +1178,23 @@ class GeminiImageGenerator:
 
                 # Return error context as text with minimal escaping
                 def escape_markdown_basic(text: str) -> str:
-                    """Escape basic problematic characters for Telegram Markdown."""
-                    return text.replace("_", "\\_").replace("*", "\\*")
+                    """Escape problematic characters for Telegram legacy Markdown."""
+                    # Escape legacy Markdown special characters
+                    return (text.replace("\\", "\\\\")  # Backslash first
+                            .replace("*", "\\*")
+                            .replace("_", "\\_")
+                            .replace("`", "\\`")
+                            .replace("{", "\\{")
+                            .replace("}", "\\}")
+                            .replace("[", "\\[")
+                            .replace("]", "\\]")
+                            .replace("(", "\\(")
+                            .replace(")", "\\)")
+                            .replace("#", "\\#")
+                            .replace("+", "\\+")
+                            .replace("-", "\\-")
+                            .replace(".", "\\.")
+                            .replace("!", "\\!"))
 
                 device_brand = escape_markdown_basic(context["device_brand"])
                 error_category = escape_markdown_basic(context["error_category"])
@@ -1179,3 +1209,7 @@ class GeminiImageGenerator:
             console.print(f"[red]Failed to generate surprise image: {e}[/red]")
             logger.error(f"Gemini image generation failed: {e}")
             return None
+
+
+# Global instance for import
+image_generator = GeminiImageGenerator()

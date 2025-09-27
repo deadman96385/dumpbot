@@ -222,7 +222,7 @@ async def _handle_mockup_reset(
                 text=review_text,
                 reply_markup=create_review_keyboard(request_id),
                 disable_web_page_preview=True,
-                parse_mode="Markdown",
+                parse_mode=settings.DEFAULT_PARSE_MODE,
             )
             success_message = "🔄 Session renewed - review message updated"
         except Exception:
@@ -255,7 +255,7 @@ async def _handle_mockup_reset(
             text=review_text,
             reply_markup=create_review_keyboard(request_id),
             disable_web_page_preview=True,
-            parse_mode="Markdown",
+            parse_mode=settings.DEFAULT_PARSE_MODE,
         )
 
         await query.edit_message_text(
@@ -296,7 +296,7 @@ async def _handle_mockup_back(
                 text=review_text,
                 reply_markup=create_review_keyboard(request_id),
                 disable_web_page_preview=True,
-                parse_mode="Markdown",
+                parse_mode=settings.DEFAULT_PARSE_MODE,
             )
             success_message = "🔄 Session renewed - review message updated"
         except Exception:
@@ -329,7 +329,7 @@ async def _handle_mockup_back(
                 text=review_text,
                 reply_markup=create_review_keyboard(request_id),
                 disable_web_page_preview=True,
-                parse_mode="Markdown",
+                parse_mode=settings.DEFAULT_PARSE_MODE,
             )
 
             await query.edit_message_text(
@@ -373,7 +373,7 @@ async def _handle_mockup_back(
                 text=review_text,
                 reply_markup=create_review_keyboard(request_id),
                 disable_web_page_preview=True,
-                parse_mode="Markdown",
+                parse_mode=settings.DEFAULT_PARSE_MODE,
             )
 
             await query.edit_message_text(
@@ -398,7 +398,7 @@ async def _handle_mockup_back(
                 text=review_text,
                 reply_markup=create_review_keyboard(request_id),
                 disable_web_page_preview=True,
-                parse_mode="Markdown",
+                parse_mode=settings.DEFAULT_PARSE_MODE,
             )
 
             await query.edit_message_text(
@@ -451,7 +451,7 @@ async def _handle_mockup_delete(
                 text=review_text,
                 reply_markup=create_review_keyboard(request_id),
                 disable_web_page_preview=True,
-                parse_mode="Markdown",
+                parse_mode=settings.DEFAULT_PARSE_MODE,
             )
             success_message = "🔄 Session renewed - review message updated"
         except Exception:
@@ -728,7 +728,7 @@ async def _handle_jenkins_cancel_callback(
                  f"🔧 **Job:** {job_name}\n"
                  f"🆔 **Build ID:** {build_id}\n\n"
                  f"📊 **Status:** {response_message}",
-            parse_mode="Markdown"
+            parse_mode=settings.DEFAULT_PARSE_MODE
         )
 
         # Remove the build from active tracking
@@ -739,5 +739,5 @@ async def _handle_jenkins_cancel_callback(
             text=f"❌ **Error Cancelling Job**\n\n"
                  f"🆔 **Build ID:** {build_id}\n"
                  f"⚠️ **Error:** {str(e)}",
-            parse_mode="Markdown"
+            parse_mode=settings.DEFAULT_PARSE_MODE
         )

@@ -9,8 +9,10 @@ from pydantic import BaseModel
 from rich.console import Console
 from telegram import Bot
 from telegram.error import RetryAfter, TelegramError
+import telegram
 
 from dumpyarabot.config import settings
+from dumpyarabot.schemas import DumpJob, JobStatus
 
 console = Console()
 
@@ -39,7 +41,7 @@ class QueuedMessage(BaseModel):
     priority: MessagePriority
     chat_id: int
     text: str
-    parse_mode: Optional[str] = None
+    parse_mode: str
     reply_to_message_id: Optional[int] = None
     reply_parameters: Optional[Dict[str, Any]] = None
     edit_message_id: Optional[int] = None
@@ -57,8 +59,13 @@ class QueuedMessage(BaseModel):
             data["message_id"] = str(uuid.uuid4())
         if "created_at" not in data:
             data["created_at"] = datetime.utcnow()
+        if "parse_mode" not in data or data.get("parse_mode") is None:
+            data["parse_mode"] = settings.DEFAULT_PARSE_MODE
         super().__init__(**data)
 
+
+# Rebuild the model to resolve any forward references
+QueuedMessage.model_rebuild()
 
 class MessageQueue:
     """Redis-based message queue for unified Telegram messaging."""
@@ -68,6 +75,7 @@ class MessageQueue:
         self._consumer_task: Optional[asyncio.Task] = None
         self._running = False
         self._bot: Optional[Bot] = None
+        self._last_edit_times: Dict[str, datetime] = {}  # Track edit times by message_id
 
     async def _get_redis(self) -> redis.Redis:
         """Get or create Redis connection."""
@@ -100,7 +108,7 @@ class MessageQueue:
         chat_id: int,
         text: str,
         reply_to_message_id: Optional[int] = None,
-        parse_mode: Optional[str] = "Markdown",
+        parse_mode: Optional[str] = settings.DEFAULT_PARSE_MODE,
         priority: MessagePriority = MessagePriority.HIGH,
         context: Optional[Dict[str, Any]] = None
     ) -> None:
@@ -121,15 +129,21 @@ class MessageQueue:
         chat_id: int,
         text: str,
         edit_message_id: Optional[int] = None,
+        parse_mode: Optional[str] = settings.DEFAULT_PARSE_MODE,
         context: Optional[Dict[str, Any]] = None
     ) -> None:
         """Send a status update message."""
+        # Ensure parse_mode is always set to a valid value
+        if parse_mode is None:
+            parse_mode = settings.DEFAULT_PARSE_MODE
         message = QueuedMessage(
             type=MessageType.STATUS_UPDATE,
             priority=MessagePriority.NORMAL,
             chat_id=chat_id,
             text=text,
+            parse_mode=parse_mode,
             edit_message_id=edit_message_id,
+            disable_web_page_preview=True,
             context=context or {}
         )
         await self.publish(message)
@@ -140,7 +154,7 @@ class MessageQueue:
         text: str,
         reply_to_message_id: int,
         reply_to_chat_id: int,
-        parse_mode: Optional[str] = "Markdown",
+        parse_mode: Optional[str] = settings.DEFAULT_PARSE_MODE,
         context: Optional[Dict[str, Any]] = None
     ) -> None:
         """Send a cross-chat message with reply parameters."""
@@ -165,7 +179,7 @@ class MessageQueue:
         chat_id: int,
         text: str,
         priority: MessagePriority = MessagePriority.URGENT,
-        parse_mode: Optional[str] = "Markdown",
+        parse_mode: Optional[str] = settings.DEFAULT_PARSE_MODE,
         context: Optional[Dict[str, Any]] = None
     ) -> None:
         """Send a notification message."""
@@ -191,7 +205,7 @@ class MessageQueue:
             priority=MessagePriority.URGENT,
             chat_id=chat_id,
             text=text,
-            parse_mode="Markdown",
+            parse_mode=settings.DEFAULT_PARSE_MODE,
             context=context or {}
         )
         await self.publish(message)
@@ -209,6 +223,47 @@ class MessageQueue:
         """Publish message and return a placeholder object for compatibility."""
         message_id = await self.publish(message)
         return self.MessagePlaceholder(message_id, message.chat_id)
+
+    async def send_immediate_message(
+        self,
+        chat_id: int,
+        text: str,
+        parse_mode: str = settings.DEFAULT_PARSE_MODE,
+        reply_to_message_id: Optional[int] = None,
+        disable_web_page_preview: bool = True
+    ) -> "telegram.Message":
+        """Send message directly via bot and return real Telegram Message object.
+
+        This bypasses the queue entirely and provides immediate access to the real
+        Telegram message ID for subsequent editing operations.
+
+        Args:
+            chat_id: The Telegram chat ID
+            text: The message text
+            parse_mode: Telegram parse mode (default: Markdown)
+            reply_to_message_id: Optional message ID to reply to
+
+        Returns:
+            Real Telegram Message object with integer message_id
+
+        Raises:
+            Exception: If bot is not initialized
+        """
+        if not self._bot:
+            raise Exception("Bot not initialized - cannot send immediate message")
+
+        console.print(f"[blue]Sending immediate message to chat {chat_id} with parse_mode={parse_mode}[/blue]")
+
+        message = await self._bot.send_message(
+            chat_id=chat_id,
+            text=text,
+            parse_mode=parse_mode,
+            reply_to_message_id=reply_to_message_id,
+            disable_web_page_preview=disable_web_page_preview
+        )
+
+        console.print(f"[green]Sent immediate message {message.message_id} to chat {chat_id}[/green]")
+        return message
 
     async def send_immediate_status_update(
         self,
@@ -234,7 +289,7 @@ class MessageQueue:
             priority=MessagePriority.HIGH,  # Higher priority for immediate messages
             chat_id=chat_id,
             text=text,
-            parse_mode="Markdown",
+            parse_mode=settings.DEFAULT_PARSE_MODE,
             context=context or {}
         )
         return await self.publish_and_return_placeholder(message)
@@ -327,7 +382,8 @@ class MessageQueue:
             return False
 
         try:
-            console.print(f"[blue]Processing {message.type.value} message for chat {message.chat_id}[/blue]")
+            parse_mode_info = f" with parse_mode={message.parse_mode}" if message.parse_mode else " with NO parse_mode"
+            console.print(f"[blue]Processing {message.type.value} message for chat {message.chat_id}{parse_mode_info}[/blue]")
 
             # Prepare common parameters
             kwargs = {
@@ -337,6 +393,7 @@ class MessageQueue:
 
             if message.parse_mode:
                 kwargs["parse_mode"] = message.parse_mode
+                message.parse_mode = settings.DEFAULT_PARSE_MODE
 
             if message.disable_web_page_preview is not None:
                 kwargs["disable_web_page_preview"] = message.disable_web_page_preview
@@ -448,6 +505,261 @@ class MessageQueue:
         stats["dead_letter"] = await redis_client.llen(dlq_key)
 
         return stats
+
+    # ========== JOB QUEUE FUNCTIONALITY ==========
+
+    def _make_job_queue_key(self) -> str:
+        """Create Redis key for the job queue."""
+        return f"{settings.REDIS_KEY_PREFIX}job_queue"
+
+    def _make_job_key(self, job_id: str) -> str:
+        """Create Redis key for individual job data."""
+        return f"{settings.REDIS_KEY_PREFIX}job:{job_id}"
+
+    def _make_worker_key(self, worker_id: str) -> str:
+        """Create Redis key for worker heartbeat."""
+        return f"{settings.REDIS_KEY_PREFIX}worker:{worker_id}"
+
+    async def queue_dump_job(self, job: DumpJob) -> str:
+        """Add a dump job to the worker queue."""
+        redis_client = await self._get_redis()
+        job_queue_key = self._make_job_queue_key()
+        job_key = self._make_job_key(job.job_id)
+
+        # Store job data
+        job_json = job.model_dump_json()
+        await redis_client.set(job_key, job_json)
+
+        # Add job ID to queue (LPUSH for FIFO with RPOP)
+        await redis_client.lpush(job_queue_key, job.job_id)
+
+        console.print(f"[green]Queued dump job {job.job_id} for URL: {job.dump_args.url}[/green]")
+        return job.job_id
+
+    async def get_next_job(self, worker_id: str) -> Optional[DumpJob]:
+        """Get the next job from the queue for a worker."""
+        redis_client = await self._get_redis()
+        job_queue_key = self._make_job_queue_key()
+
+        # Get next job ID (blocking for up to 1 second)
+        result = await redis_client.brpop(job_queue_key, timeout=1)
+        if not result:
+            return None
+
+        _, job_id = result
+        job_key = self._make_job_key(job_id)
+
+        # Get job data
+        job_json = await redis_client.get(job_key)
+        if not job_json:
+            console.print(f"[red]Job {job_id} not found in Redis[/red]")
+            return None
+
+        job = DumpJob.model_validate_json(job_json)
+
+        # Update job status and assign worker
+        job.status = JobStatus.PROCESSING
+        job.worker_id = worker_id
+        job.started_at = datetime.utcnow()
+
+        # Save updated job
+        await redis_client.set(job_key, job.model_dump_json())
+
+        # Update worker heartbeat
+        worker_key = self._make_worker_key(worker_id)
+        await redis_client.setex(worker_key, 300, job_id)  # 5 minute TTL
+
+        console.print(f"[blue]Assigned job {job_id} to worker {worker_id}[/blue]")
+        return job
+
+    def _should_throttle_edit(self, message_id: str, min_interval: float = 2.0) -> bool:
+        """Check if message edit should be throttled based on rate limiting."""
+        now = datetime.utcnow()
+        last_edit = self._last_edit_times.get(message_id)
+
+        if last_edit and (now - last_edit).total_seconds() < min_interval:
+            return True
+
+        self._last_edit_times[message_id] = now
+        return False
+
+    async def send_job_progress_update(
+        self,
+        job_id: str,
+        progress_data: Dict[str, Any],
+        edit_message_id: Optional[int] = None,
+        chat_id: Optional[int] = None
+    ) -> None:
+        """Send a job progress update that edits the initial message."""
+        if not edit_message_id or not chat_id:
+            console.print(f"[yellow]No message reference for job {job_id}, skipping progress update[/yellow]")
+            return
+
+        # Apply rate limiting for message edits
+        message_key = f"{chat_id}:{edit_message_id}"
+        if self._should_throttle_edit(message_key):
+            console.print(f"[yellow]Throttling edit for job {job_id} due to rate limiting[/yellow]")
+            return
+
+        message = QueuedMessage(
+            type=MessageType.STATUS_UPDATE,
+            priority=MessagePriority.NORMAL,
+            chat_id=chat_id,
+            text=progress_data.get("formatted_message", "Progress update"),
+            edit_message_id=edit_message_id,
+            parse_mode=settings.DEFAULT_PARSE_MODE,
+            context={"job_id": job_id, "progress": True}
+        )
+        await self.publish(message)
+
+    async def send_cross_chat_edit(
+        self,
+        chat_id: int,
+        text: str,
+        edit_message_id: int,
+        reply_to_message_id: int,
+        reply_to_chat_id: int,
+        context: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """Send a cross-chat message edit with reply parameters."""
+        reply_params = {
+            "message_id": reply_to_message_id,
+            "chat_id": reply_to_chat_id
+        }
+
+        message = QueuedMessage(
+            type=MessageType.CROSS_CHAT,
+            priority=MessagePriority.NORMAL,
+            chat_id=chat_id,
+            text=text,
+            parse_mode=settings.DEFAULT_PARSE_MODE,
+            edit_message_id=edit_message_id,
+            reply_parameters=reply_params,
+            disable_web_page_preview=True,
+            context=context or {}
+        )
+        await self.publish(message)
+
+    async def update_job_status(
+        self,
+        job_id: str,
+        status: JobStatus,
+        progress: Optional[Dict[str, Any]] = None,
+        error_details: Optional[str] = None,
+        result_data: Optional[Dict[str, Any]] = None,
+        job_data: Optional[DumpJob] = None
+    ) -> bool:
+        """Update job status and progress."""
+        redis_client = await self._get_redis()
+        job_key = self._make_job_key(job_id)
+
+        # Use provided job_data or get from Redis
+        if job_data:
+            job = job_data
+        else:
+            job_json = await redis_client.get(job_key)
+            if not job_json:
+                console.print(f"[red]Job {job_id} not found for status update[/red]")
+                return False
+            job = DumpJob.model_validate_json(job_json)
+
+        # Update job fields
+        job.status = status
+        if progress:
+            from dumpyarabot.schemas import JobProgress
+            job.progress = JobProgress(**progress)
+        if error_details:
+            job.error_details = error_details
+        if result_data:
+            job.result_data = result_data
+
+        # Set completion time for terminal states
+        if status in [JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED]:
+            job.completed_at = datetime.utcnow()
+
+        # Save updated job
+        await redis_client.set(job_key, job.model_dump_json())
+
+        console.print(f"[blue]Updated job {job_id} status to {status.value}[/blue]")
+        return True
+
+    async def get_job_status(self, job_id: str) -> Optional[DumpJob]:
+        """Get current status of a job."""
+        redis_client = await self._get_redis()
+        job_key = self._make_job_key(job_id)
+
+        job_json = await redis_client.get(job_key)
+        if not job_json:
+            return None
+
+        return DumpJob.model_validate_json(job_json)
+
+    async def cancel_job(self, job_id: str) -> bool:
+        """Cancel a job (if it's still queued or processing)."""
+        redis_client = await self._get_redis()
+        job_key = self._make_job_key(job_id)
+
+        # Get current job
+        job_json = await redis_client.get(job_key)
+        if not job_json:
+            console.print(f"[red]Job {job_id} not found for cancellation[/red]")
+            return False
+
+        job = DumpJob.model_validate_json(job_json)
+
+        # Only cancel if job is still cancellable
+        if job.status in [JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED]:
+            console.print(f"[yellow]Job {job_id} cannot be cancelled (status: {job.status.value})[/yellow]")
+            return False
+
+        # Update status
+        job.status = JobStatus.CANCELLED
+        job.completed_at = datetime.utcnow()
+        await redis_client.set(job_key, job.model_dump_json())
+
+        # If job is queued, remove from queue
+        if job.status == JobStatus.QUEUED:
+            job_queue_key = self._make_job_queue_key()
+            await redis_client.lrem(job_queue_key, 1, job_id)
+
+        console.print(f"[green]Cancelled job {job_id}[/green]")
+        return True
+
+    async def get_job_queue_stats(self) -> Dict[str, Any]:
+        """Get statistics about the job queue."""
+        redis_client = await self._get_redis()
+
+        # Count jobs in queue
+        job_queue_key = self._make_job_queue_key()
+        queued_count = await redis_client.llen(job_queue_key)
+
+        # Count jobs by status
+        status_counts = {status.value: 0 for status in JobStatus}
+
+        # Get all job keys
+        job_pattern = f"{settings.REDIS_KEY_PREFIX}job:*"
+        job_keys = await redis_client.keys(job_pattern)
+
+        total_jobs = len(job_keys)
+
+        for job_key in job_keys:
+            job_json = await redis_client.get(job_key)
+            if job_json:
+                job = DumpJob.model_validate_json(job_json)
+                status_counts[job.status.value] += 1
+
+        # Count active workers
+        worker_pattern = f"{settings.REDIS_KEY_PREFIX}worker:*"
+        worker_keys = await redis_client.keys(worker_pattern)
+        active_workers = len(worker_keys)
+
+        return {
+            "total_jobs": total_jobs,
+            "queued_jobs": queued_count,
+            "active_workers": active_workers,
+            "status_breakdown": status_counts,
+            "worker_keys": [key.decode() for key in worker_keys] if worker_keys else []
+        }
 
 
 # Global message queue instance

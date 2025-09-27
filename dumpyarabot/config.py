@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379/0"
     REDIS_KEY_PREFIX: str = "dumpyarabot:"
 
+    # Telegram formatting configuration
+    DEFAULT_PARSE_MODE: str = "Markdown"
+
     # Gemini AI configuration for log analysis
     GEMINI_API_KEY: str | None = None
 

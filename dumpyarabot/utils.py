@@ -11,6 +11,36 @@ from dumpyarabot.config import settings
 console = Console()
 
 
+def escape_markdown(text: str) -> str:
+    """Escape special characters for Telegram legacy Markdown format.
+
+    Args:
+        text: The text to escape
+
+    Returns:
+        Text with Markdown special characters escaped
+    """
+    if not text:
+        return text
+
+    # Escape backslash first, then other special characters for legacy Markdown
+    return (text.replace("\\", "\\\\")  # Backslash first
+            .replace("*", "\\*")
+            .replace("_", "\\_")
+            .replace("`", "\\`")
+            .replace("{", "\\{")
+            .replace("}", "\\}")
+            .replace("[", "\\[")
+            .replace("]", "\\]")
+            .replace("(", "\\(")
+            .replace(")", "\\)")
+            .replace("#", "\\#")
+            .replace("+", "\\+")
+            .replace("-", "\\-")
+            .replace(".", "\\.")
+            .replace("!", "\\!"))
+
+
 def generate_request_id() -> str:
     """Generate a unique request ID."""
     return secrets.token_hex(4)  # 8-character hex string
@@ -358,9 +388,11 @@ async def get_build_summary_info(job_name: str, build: schemas.JenkinsBuild) -> 
         }.get(build.result, "❓")
 
         # Build summary
+        escaped_job_name = escape_markdown(job_name)
+        escaped_build_number = str(build.number)  # build.number is int
         summary_parts = [
-            f"**Job:** `{job_name}`",
-            f"**Build:** `#{build.number}`",
+            f"**Job:** `{escaped_job_name}`",
+            f"**Build:** `#{escaped_build_number}`",
             f"**Result:** {result_emoji} {build.result or 'Unknown'}"
         ]
 
@@ -372,4 +404,6 @@ async def get_build_summary_info(job_name: str, build: schemas.JenkinsBuild) -> 
     except Exception as e:
         console.print(f"[yellow]Failed to get build summary info: {e}[/yellow]")
         # Fallback summary
-        return f"**Job:** `{job_name}`\n**Build:** `#{build.number}`\n**Result:** {build.result or 'Unknown'}"
+        escaped_job_name = escape_markdown(job_name)
+        escaped_build_number = str(build.number)
+        return f"**Job:** `{escaped_job_name}`\n**Build:** `#{escaped_build_number}`\n**Result:** {build.result or 'Unknown'}"

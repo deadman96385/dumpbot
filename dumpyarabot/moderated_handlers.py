@@ -7,6 +7,7 @@ from telegram import Chat, Message, ReplyParameters, Update
 from telegram.ext import ContextTypes
 
 from dumpyarabot import schemas, utils
+from dumpyarabot.utils import escape_markdown
 from dumpyarabot.config import (CALLBACK_ACCEPT, CALLBACK_CANCEL_REQUEST,
                                 CALLBACK_REJECT, CALLBACK_SUBMIT_ACCEPTANCE,
                                 CALLBACK_TOGGLE_ALT, CALLBACK_TOGGLE_FORCE,
@@ -105,7 +106,7 @@ async def handle_request_message(
             priority=MessagePriority.HIGH,
             chat_id=settings.REVIEW_CHAT_ID,
             text=review_text,
-            parse_mode="Markdown",
+            parse_mode=settings.DEFAULT_PARSE_MODE,
             keyboard=keyboard_dict,
             disable_web_page_preview=True,
             context={"moderated_request": True, "request_id": request_id, "stage": "review"}
@@ -118,7 +119,7 @@ async def handle_request_message(
             priority=MessagePriority.HIGH,
             chat_id=chat.id,
             text=SUBMISSION_TEMPLATE.format(url=validated_url),
-            parse_mode="Markdown",
+            parse_mode=settings.DEFAULT_PARSE_MODE,
             reply_to_message_id=message.message_id,
             disable_web_page_preview=True,
             context={"moderated_request": True, "request_id": request_id, "stage": "submission_confirmation"}
@@ -304,7 +305,8 @@ async def _handle_submit_callback(
                         "Your request is under further review for private processing."
                     )
                 else:
-                    user_message = f"{ACCEPTANCE_TEMPLATE}\n{status_message}"
+                    escaped_status = escape_markdown(status_message)
+                    user_message = f"{ACCEPTANCE_TEMPLATE}\n{escaped_status}"
 
                 console.print(f"[green]Sending existing build acceptance message to user: {user_message}[/green]")
                 console.print(f"[blue]Chat ID: {pending_review.original_chat_id}, Message ID: {pending_review.original_message_id}[/blue]")
@@ -413,7 +415,7 @@ async def accept_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         if not context.args:
             await message_queue.send_reply(
                 chat_id=chat.id,
-                text="Usage: `/accept [request_id] [options]` or reply to a review message with `/accept [options]`\nOptions: a=alt, f=force, p=privdump",
+                text="Usage: `/accept \\[request\\_id\\] \\[options\\]` or reply to a review message with `/accept \\[options\\]`\nOptions: a\\=alt, f\\=force, p\\=privdump",
                 reply_to_message_id=message.message_id,
                 context={"command": "accept", "error": "missing_args"}
             )
@@ -454,9 +456,10 @@ async def accept_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 console.print(
                     f"[yellow]Found existing build: {status_message}[/yellow]"
                 )
+                escaped_status = escape_markdown(status_message)
                 await message_queue.send_reply(
                     chat_id=chat.id,
-                    text=f"✅ Request {request_id} processed\n{status_message}",
+                    text=f"✅ Request {request_id} processed\n{escaped_status}",
                     reply_to_message_id=message.message_id,
                     context={"command": "accept", "action": "existing_build_found", "request_id": request_id}
                 )
@@ -467,7 +470,8 @@ async def accept_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                         "Your request is under further review for private processing."
                     )
                 else:
-                    user_message = f"{ACCEPTANCE_TEMPLATE}\n{status_message}"
+                    escaped_status = escape_markdown(status_message)
+                    user_message = f"{ACCEPTANCE_TEMPLATE}\n{escaped_status}"
 
                 console.print(f"[green]Sending existing build acceptance message via command to user: {user_message}[/green]")
                 console.print(f"[blue]Chat ID: {pending_review.original_chat_id}, Message ID: {pending_review.original_message_id}[/blue]")
@@ -577,7 +581,7 @@ async def reject_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         if not context.args:
             await message_queue.send_reply(
                 chat_id=chat.id,
-                text="Usage: `/reject [request_id] [reason]` or reply to a review message with `/reject [reason]`",
+                text="Usage: `/reject \\[request\\_id\\] \\[reason\\]` or reply to a review message with `/reject \\[reason\\]`",
                 reply_to_message_id=message.message_id,
                 context={"command": "reject", "error": "missing_args"}
             )

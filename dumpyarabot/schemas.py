@@ -1,4 +1,6 @@
-from typing import Dict, List, Optional
+from datetime import datetime
+from enum import Enum
+from typing import Dict, List, Optional, Any
 
 from pydantic import AnyHttpUrl, BaseModel
 
@@ -49,3 +51,44 @@ class ActiveJenkinsBuild(BaseModel):
     url: AnyHttpUrl
     requester_username: Optional[str] = None
     request_id: Optional[str] = None
+
+
+class JobStatus(str, Enum):
+    """Status of a dump job in the worker queue."""
+    QUEUED = "queued"         # Job is waiting to be processed
+    PROCESSING = "processing" # Job is currently being processed by a worker
+    COMPLETED = "completed"   # Job completed successfully
+    FAILED = "failed"         # Job failed with errors
+    CANCELLED = "cancelled"   # Job was cancelled by user/admin
+
+
+class JobProgress(BaseModel):
+    """Progress information for a dump job."""
+    current_step: str
+    total_steps: int
+    current_step_number: int
+    percentage: float
+    details: Optional[str] = None
+    error_message: Optional[str] = None
+
+
+class DumpJob(BaseModel):
+    """Schema for dump jobs in the worker queue."""
+    job_id: str
+    dump_args: DumpArguments
+    add_blacklist: bool = False
+    status: JobStatus = JobStatus.QUEUED
+    worker_id: Optional[str] = None
+    progress: Optional[JobProgress] = None
+    created_at: datetime
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    result_data: Optional[Dict[str, Any]] = None  # GitLab URLs, build info, etc.
+    error_details: Optional[str] = None
+    initial_message_id: Optional[int] = None  # Track the initial message for editing
+    initial_chat_id: Optional[int] = None     # Track chat for cross-chat support
+
+    def __init__(self, **data):
+        if "created_at" not in data:
+            data["created_at"] = datetime.utcnow()
+        super().__init__(**data)

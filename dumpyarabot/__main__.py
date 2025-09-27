@@ -4,7 +4,7 @@ import sys
 from telegram.ext import (ApplicationBuilder, CallbackQueryHandler,
                           CommandHandler, MessageHandler, filters, JobQueue)
 
-from dumpyarabot.handlers import analyze, blacklist, cancel_dump, dump, help_command, restart, surprise
+from dumpyarabot.handlers import analyze, blacklist, cancel_dump, dump, help_command, restart, status, surprise
 from dumpyarabot.message_queue import message_queue
 from dumpyarabot.mockup_handlers import (handle_enhanced_callback_query,
                                          mockup_command)
@@ -83,6 +83,7 @@ if __name__ == "__main__":
     dump_handler = CommandHandler("dump", dump)
     blacklist_handler = CommandHandler("blacklist", blacklist)
     cancel_dump_handler = CommandHandler("cancel", cancel_dump)
+    status_handler = CommandHandler("status", status)
     help_handler = CommandHandler("help", help_command)
 
     # Mockup handler for testing UI flow
@@ -110,6 +111,7 @@ if __name__ == "__main__":
     application.add_handler(dump_handler)
     application.add_handler(blacklist_handler)
     application.add_handler(cancel_dump_handler)
+    application.add_handler(status_handler)
     application.add_handler(help_handler)
     application.add_handler(mockup_handler)
     application.add_handler(accept_handler)
