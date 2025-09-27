@@ -79,6 +79,144 @@ uv run autoflake --in-place --remove-all-unused-imports --recursive .
 uv run mypy dumpyarabot/
 ```
 
+## Testing System
+
+The project includes a comprehensive 3-tier testing system to ensure code quality and prevent regressions.
+
+### Test Categories
+
+#### Unit Tests (`tests/unit/`)
+Fast, isolated tests that mock external dependencies to test individual components.
+
+**Coverage:**
+- Schema validation (`test_schemas.py`)
+- Utility functions (`test_utils.py`)
+- URL processing (`test_url_utils.py`)
+- Message formatting (`test_message_formatting.py`)
+- Message queue operations (`test_message_queue.py`)
+- Moderated handlers (`test_moderated_handlers.py`)
+- Telegram bot handlers (`test_handlers.py`)
+
+#### Integration Tests (`tests/integration/`)
+Test component interactions with real ARQ job processing but mocked external services.
+
+**Coverage:**
+- ARQ job pipeline (`test_arq_jobs.py`)
+- Firmware processing components with mocked downloads/GitLab
+
+#### End-to-End Tests (`tests/e2e/`)
+Complete user workflow testing with real Telegram and GitLab APIs.
+
+**Coverage:**
+- Direct dump commands (`test_direct_dump_flow.py`)
+- Moderated request flow (`test_moderated_request_flow.py`)
+
+### Test Infrastructure Setup
+
+#### Required Environment Variables for E2E Tests
+```bash
+# Test Telegram Bot
+TEST_BOT_TOKEN=your_test_bot_token
+TEST_DUMP_CHAT_ID=123456789
+TEST_REQUEST_CHAT_ID=987654321
+TEST_REVIEW_CHAT_ID=555666777
+
+# Test GitLab (optional, falls back to production)
+TEST_GITLAB_SERVER=test.gitlab.com
+TEST_GITLAB_TOKEN=test_token
+
+# Redis for ARQ job storage
+TEST_REDIS_URL=redis://localhost:6379/0
+```
+
+#### Test Data
+Test firmware files are stored in `tests/fixtures/mock_firmware/`:
+- `xiaomi_firmware.zip` - Xiaomi-style firmware with realistic build properties
+- `samsung_firmware.zip` - Samsung-style firmware
+- `minimal_firmware.zip` - Basic test firmware
+- `corrupted_firmware.zip` - Invalid firmware for error testing
+
+Build properties are stored in `tests/fixtures/build_props/` with real device data.
+
+### Running Tests
+
+#### Development
+```bash
+# Install test dependencies
+uv sync --extra test
+
+# Run all tests with coverage
+uv run pytest --cov=dumpyarabot --cov-report=html
+
+# Run specific test categories
+uv run pytest tests/unit/ -v          # Unit tests only (fast)
+uv run pytest tests/integration/ -v   # Integration tests (requires Redis)
+uv run pytest tests/e2e/ -v           # E2E tests (requires test infrastructure)
+
+# Run tests with keyword filter
+uv run pytest -k "dump" -v
+
+# Debug failing test
+uv run pytest tests/unit/test_schemas.py::TestDumpArguments::test_valid_dump_arguments -v -s
+```
+
+#### CI/CD
+Tests run automatically on GitHub Actions:
+- **Push to main/develop**: Unit and integration tests
+- **Push to main with `[e2e]` in commit**: Includes E2E tests
+- **Pull requests**: Unit and integration tests
+
+### Test Configuration
+
+#### Fixtures (`tests/conftest.py`)
+Common test fixtures available across all test files:
+- `test_config`: Test configuration with environment fallbacks
+- `mock_telegram_update`: Mock Telegram update objects
+- `mock_telegram_bot`: Mock Telegram bot instance
+- `mock_arq_context`: Mock ARQ worker context
+- `faker`: Fake data generator for test data
+
+#### Test Markers
+```python
+@pytest.mark.unit      # Unit tests
+@pytest.mark.integration  # Integration tests
+@pytest.mark.e2e       # End-to-end tests
+@pytest.mark.slow      # Slow running tests
+```
+
+### Writing Tests
+
+#### Test Structure
+```python
+@pytest.mark.unit
+class TestComponent:
+    """Test class for component."""
+
+    @pytest.mark.asyncio
+    async def test_feature(self, test_config, mock_telegram_update):
+        """Test specific feature."""
+        # Arrange
+        # Act
+        # Assert
+```
+
+#### Mocking Strategy
+- **Unit tests**: Mock all external dependencies (Telegram, ARQ, GitLab)
+- **Integration tests**: Mock firmware downloads and GitLab, use real ARQ
+- **E2E tests**: Mock firmware data, use real Telegram/GitLab APIs
+
+### Coverage Goals
+
+- **Unit Tests**: 80%+ coverage of core logic
+- **Integration Tests**: Critical user paths and component interactions
+- **E2E Tests**: Main user workflows (direct dumps, moderated requests)
+
+Run coverage report:
+```bash
+uv run pytest --cov=dumpyarabot --cov-report=html
+# Open htmlcov/index.html
+```
+
 ## Architecture
 
 ### Core Components

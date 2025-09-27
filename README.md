@@ -187,6 +187,49 @@ uv run mypy dumpyarabot/
 
 The bot runs as a long-running process and won't pick up code changes until restarted.
 
+### Testing
+
+The project includes a comprehensive testing system with unit, integration, and end-to-end tests.
+
+#### Quick Test Commands
+```bash
+# Install test dependencies
+uv sync --extra test
+
+# Run all tests with coverage
+uv run pytest --cov=dumpyarabot --cov-report=html
+
+# Run specific test categories
+uv run pytest tests/unit/ -v          # Unit tests only (fast)
+uv run pytest tests/integration/ -v   # Integration tests (requires Redis)
+uv run pytest tests/e2e/ -v           # E2E tests (requires test infrastructure)
+```
+
+#### Test Infrastructure Setup
+For end-to-end tests, set up test infrastructure:
+
+```bash
+# Test Telegram Bot (create via @BotFather)
+TEST_BOT_TOKEN=your_test_bot_token
+TEST_DUMP_CHAT_ID=123456789
+TEST_REQUEST_CHAT_ID=987654321
+TEST_REVIEW_CHAT_ID=555666777
+
+# Test GitLab (optional)
+TEST_GITLAB_SERVER=test.gitlab.com
+TEST_GITLAB_TOKEN=test_token
+
+# Redis for ARQ
+TEST_REDIS_URL=redis://localhost:6379/0
+```
+
+#### Test Categories
+- **Unit Tests**: Fast isolated tests for individual components
+- **Integration Tests**: Component interactions with real ARQ workers
+- **End-to-End Tests**: Complete user workflows with real services
+
+Test firmware fixtures are available in `tests/fixtures/mock_firmware/` for realistic testing scenarios.
+
 ## 📊 ARQ Integration
 
 The bot uses ARQ (Async Redis Queue) for distributed job processing with integrated firmware extraction:
