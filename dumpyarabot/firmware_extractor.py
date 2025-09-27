@@ -333,17 +333,24 @@ class FirmwareExtractor:
 
         ikconfig_path = self.work_dir / "ikconfig"
 
-        result = await asyncio.create_subprocess_exec(
-            "extract-ikconfig", str(image_path),
-            stdout=open(ikconfig_path, 'w'),
-            stderr=asyncio.subprocess.DEVNULL
-        )
-        await result.communicate()
+        try:
+            result = await asyncio.create_subprocess_exec(
+                "extract-ikconfig", str(image_path),
+                stdout=open(ikconfig_path, 'w'),
+                stderr=asyncio.subprocess.DEVNULL
+            )
+            await result.communicate()
 
-        if result.returncode == 0 and ikconfig_path.exists():
-            console.print("[green]ikconfig extracted successfully[/green]")
-        else:
-            console.print("[yellow]Failed to extract ikconfig[/yellow]")
+            if result.returncode == 0 and ikconfig_path.exists():
+                console.print("[green]ikconfig extracted successfully[/green]")
+            else:
+                console.print("[yellow]Failed to extract ikconfig[/yellow]")
+                if ikconfig_path.exists():
+                    ikconfig_path.unlink()
+        except FileNotFoundError:
+            console.print("[yellow]extract-ikconfig tool not found, skipping ikconfig extraction[/yellow]")
+        except Exception as e:
+            console.print(f"[yellow]Error extracting ikconfig: {e}[/yellow]")
             if ikconfig_path.exists():
                 ikconfig_path.unlink()
 
@@ -353,18 +360,25 @@ class FirmwareExtractor:
 
         kallsyms_path = self.work_dir / "kallsyms.txt"
 
-        result = await asyncio.create_subprocess_exec(
-            "uvx", "--from", "git+https://github.com/marin-m/vmlinux-to-elf@master",
-            "kallsyms-finder", str(image_path),
-            stdout=open(kallsyms_path, 'w'),
-            stderr=asyncio.subprocess.DEVNULL
-        )
-        await result.communicate()
+        try:
+            result = await asyncio.create_subprocess_exec(
+                "uvx", "--from", "git+https://github.com/marin-m/vmlinux-to-elf@master",
+                "kallsyms-finder", str(image_path),
+                stdout=open(kallsyms_path, 'w'),
+                stderr=asyncio.subprocess.DEVNULL
+            )
+            await result.communicate()
 
-        if result.returncode == 0 and kallsyms_path.exists():
-            console.print("[green]kallsyms.txt generated successfully[/green]")
-        else:
-            console.print("[yellow]Failed to generate kallsyms.txt[/yellow]")
+            if result.returncode == 0 and kallsyms_path.exists():
+                console.print("[green]kallsyms.txt generated successfully[/green]")
+            else:
+                console.print("[yellow]Failed to generate kallsyms.txt[/yellow]")
+                if kallsyms_path.exists():
+                    kallsyms_path.unlink()
+        except FileNotFoundError:
+            console.print("[yellow]uvx or kallsyms-finder tool not found, skipping kallsyms extraction[/yellow]")
+        except Exception as e:
+            console.print(f"[yellow]Error extracting kallsyms: {e}[/yellow]")
             if kallsyms_path.exists():
                 kallsyms_path.unlink()
 
@@ -374,18 +388,23 @@ class FirmwareExtractor:
 
         elf_path = self.work_dir / "boot.elf"
 
-        result = await asyncio.create_subprocess_exec(
-            "uvx", "--from", "git+https://github.com/marin-m/vmlinux-to-elf@master",
-            "vmlinux-to-elf", str(image_path), str(elf_path),
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL
-        )
-        await result.communicate()
+        try:
+            result = await asyncio.create_subprocess_exec(
+                "uvx", "--from", "git+https://github.com/marin-m/vmlinux-to-elf@master",
+                "vmlinux-to-elf", str(image_path), str(elf_path),
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL
+            )
+            await result.communicate()
 
-        if result.returncode == 0 and elf_path.exists():
-            console.print("[green]boot.elf extracted successfully[/green]")
-        else:
-            console.print("[yellow]Failed to extract boot.elf[/yellow]")
+            if result.returncode == 0 and elf_path.exists():
+                console.print("[green]boot.elf extracted successfully[/green]")
+            else:
+                console.print("[yellow]Failed to extract boot.elf[/yellow]")
+        except FileNotFoundError:
+            console.print("[yellow]uvx or vmlinux-to-elf tool not found, skipping ELF extraction[/yellow]")
+        except Exception as e:
+            console.print(f"[yellow]Error extracting boot ELF: {e}[/yellow]")
 
     async def _extract_device_trees(self, image_path: Path, output_dir: Path, is_dtbo: bool = False):
         """Extract and decompile device tree blobs."""
@@ -402,15 +421,22 @@ class FirmwareExtractor:
         console.print(f"[blue]{image_path.name}: Extracting device-tree blobs...[/blue]")
 
         # Extract DTBs
-        result = await asyncio.create_subprocess_exec(
-            "extract-dtb", str(image_path), "-o", str(dtb_dir),
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL
-        )
-        await result.communicate()
+        try:
+            result = await asyncio.create_subprocess_exec(
+                "extract-dtb", str(image_path), "-o", str(dtb_dir),
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL
+            )
+            await result.communicate()
 
-        if result.returncode != 0:
-            console.print("[yellow]No device-tree blobs found[/yellow]")
+            if result.returncode != 0:
+                console.print("[yellow]No device-tree blobs found[/yellow]")
+                return
+        except FileNotFoundError:
+            console.print("[yellow]extract-dtb tool not found, skipping device tree extraction[/yellow]")
+            return
+        except Exception as e:
+            console.print(f"[yellow]Error extracting device trees: {e}[/yellow]")
             return
 
         # Remove kernel directory if present
@@ -426,17 +452,24 @@ class FirmwareExtractor:
             for dtb_file in dtb_files:
                 dts_file = dts_dir / f"{dtb_file.stem}.dts"
 
-                result = await asyncio.create_subprocess_exec(
-                    "dtc", "-q", "-I", "dtb", "-O", "dts", str(dtb_file),
-                    stdout=open(dts_file, 'w'),
-                    stderr=asyncio.subprocess.DEVNULL
-                )
-                await result.communicate()
+                try:
+                    result = await asyncio.create_subprocess_exec(
+                        "dtc", "-q", "-I", "dtb", "-O", "dts", str(dtb_file),
+                        stdout=open(dts_file, 'w'),
+                        stderr=asyncio.subprocess.DEVNULL
+                    )
+                    await result.communicate()
 
-                if result.returncode == 0:
-                    console.print(f"[green]Decompiled {dtb_file.name}[/green]")
-                else:
-                    console.print(f"[yellow]Failed to decompile {dtb_file.name}[/yellow]")
+                    if result.returncode == 0:
+                        console.print(f"[green]Decompiled {dtb_file.name}[/green]")
+                    else:
+                        console.print(f"[yellow]Failed to decompile {dtb_file.name}[/yellow]")
+                        if dts_file.exists():
+                            dts_file.unlink()
+                except FileNotFoundError:
+                    console.print(f"[yellow]dtc tool not found, skipping decompilation of {dtb_file.name}[/yellow]")
+                except Exception as e:
+                    console.print(f"[yellow]Error decompiling {dtb_file.name}: {e}[/yellow]")
                     if dts_file.exists():
                         dts_file.unlink()
 

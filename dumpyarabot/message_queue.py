@@ -506,71 +506,8 @@ class MessageQueue:
 
         return stats
 
-    # ========== JOB QUEUE FUNCTIONALITY ==========
-
-    def _make_job_queue_key(self) -> str:
-        """Create Redis key for the job queue."""
-        return f"{settings.REDIS_KEY_PREFIX}job_queue"
-
-    def _make_job_key(self, job_id: str) -> str:
-        """Create Redis key for individual job data."""
-        return f"{settings.REDIS_KEY_PREFIX}job:{job_id}"
-
-    def _make_worker_key(self, worker_id: str) -> str:
-        """Create Redis key for worker heartbeat."""
-        return f"{settings.REDIS_KEY_PREFIX}worker:{worker_id}"
-
-    async def queue_dump_job(self, job: DumpJob) -> str:
-        """Add a dump job to the worker queue."""
-        redis_client = await self._get_redis()
-        job_queue_key = self._make_job_queue_key()
-        job_key = self._make_job_key(job.job_id)
-
-        # Store job data
-        job_json = job.model_dump_json()
-        await redis_client.set(job_key, job_json)
-
-        # Add job ID to queue (LPUSH for FIFO with RPOP)
-        await redis_client.lpush(job_queue_key, job.job_id)
-
-        console.print(f"[green]Queued dump job {job.job_id} for URL: {job.dump_args.url}[/green]")
-        return job.job_id
-
-    async def get_next_job(self, worker_id: str) -> Optional[DumpJob]:
-        """Get the next job from the queue for a worker."""
-        redis_client = await self._get_redis()
-        job_queue_key = self._make_job_queue_key()
-
-        # Get next job ID (blocking for up to 1 second)
-        result = await redis_client.brpop(job_queue_key, timeout=1)
-        if not result:
-            return None
-
-        _, job_id = result
-        job_key = self._make_job_key(job_id)
-
-        # Get job data
-        job_json = await redis_client.get(job_key)
-        if not job_json:
-            console.print(f"[red]Job {job_id} not found in Redis[/red]")
-            return None
-
-        job = DumpJob.model_validate_json(job_json)
-
-        # Update job status and assign worker
-        job.status = JobStatus.PROCESSING
-        job.worker_id = worker_id
-        job.started_at = datetime.utcnow()
-
-        # Save updated job
-        await redis_client.set(job_key, job.model_dump_json())
-
-        # Update worker heartbeat
-        worker_key = self._make_worker_key(worker_id)
-        await redis_client.setex(worker_key, 300, job_id)  # 5 minute TTL
-
-        console.print(f"[blue]Assigned job {job_id} to worker {worker_id}[/blue]")
-        return job
+    # ========== ARQ BRIDGE FUNCTIONALITY ==========
+    # This section bridges to ARQ while preserving all Telegram messaging features
 
     def _should_throttle_edit(self, message_id: str, min_interval: float = 2.0) -> bool:
         """Check if message edit should be throttled based on rate limiting."""
@@ -582,35 +519,6 @@ class MessageQueue:
 
         self._last_edit_times[message_id] = now
         return False
-
-    async def send_job_progress_update(
-        self,
-        job_id: str,
-        progress_data: Dict[str, Any],
-        edit_message_id: Optional[int] = None,
-        chat_id: Optional[int] = None
-    ) -> None:
-        """Send a job progress update that edits the initial message."""
-        if not edit_message_id or not chat_id:
-            console.print(f"[yellow]No message reference for job {job_id}, skipping progress update[/yellow]")
-            return
-
-        # Apply rate limiting for message edits
-        message_key = f"{chat_id}:{edit_message_id}"
-        if self._should_throttle_edit(message_key):
-            console.print(f"[yellow]Throttling edit for job {job_id} due to rate limiting[/yellow]")
-            return
-
-        message = QueuedMessage(
-            type=MessageType.STATUS_UPDATE,
-            priority=MessagePriority.NORMAL,
-            chat_id=chat_id,
-            text=progress_data.get("formatted_message", "Progress update"),
-            edit_message_id=edit_message_id,
-            parse_mode=settings.DEFAULT_PARSE_MODE,
-            context={"job_id": job_id, "progress": True}
-        )
-        await self.publish(message)
 
     async def send_cross_chat_edit(
         self,
@@ -640,6 +548,112 @@ class MessageQueue:
         )
         await self.publish(message)
 
+    async def queue_dump_job(self, job: DumpJob) -> str:
+        """Queue a dump job using ARQ."""
+        from dumpyarabot.arq_config import arq_pool
+
+        # Convert DumpJob to dict for ARQ
+        job_data = job.model_dump()
+
+        # Enqueue to ARQ
+        arq_job = await arq_pool.enqueue_job(
+            "process_firmware_dump",
+            job_data,
+            job_id=job.job_id
+        )
+
+        console.print(f"[green]Queued ARQ dump job {job.job_id} for URL: {job.dump_args.url}[/green]")
+        return job.job_id
+
+    async def get_job_status(self, job_id: str) -> Optional[DumpJob]:
+        """Get job status from ARQ and convert back to DumpJob format for compatibility."""
+        from dumpyarabot.arq_config import arq_pool
+
+        arq_status = await arq_pool.get_job_status(job_id)
+        if not arq_status:
+            return None
+
+        # Convert ARQ status back to DumpJob format for compatibility with existing code
+        try:
+            # ARQ doesn't store the original job data in results, so we create a minimal DumpJob
+            # with status information for compatibility with status commands
+            job_data = {
+                "job_id": job_id,
+                "status": self._arq_status_to_job_status(arq_status["status"]),
+                "dump_args": {"url": ""},  # Minimal data for compatibility
+                "add_blacklist": False,
+                "created_at": arq_status.get("enqueue_time"),
+                "started_at": arq_status.get("start_time"),
+                "completed_at": arq_status.get("finish_time"),
+                "worker_id": "arq_worker",
+                "error_details": None,
+                "result_data": arq_status.get("result"),
+                "progress": None
+            }
+
+            # If job failed, extract error from result
+            if not arq_status.get("success", True) and arq_status.get("result"):
+                if isinstance(arq_status["result"], dict) and "error" in arq_status["result"]:
+                    job_data["error_details"] = arq_status["result"]["error"]
+
+            return DumpJob.model_validate(job_data)
+
+        except Exception as e:
+            console.print(f"[yellow]Could not convert ARQ status to DumpJob: {e}[/yellow]")
+            return None
+
+    def _arq_status_to_job_status(self, arq_status: str) -> JobStatus:
+        """Convert ARQ status to JobStatus enum."""
+        status_mapping = {
+            "queued": JobStatus.QUEUED,
+            "in_progress": JobStatus.PROCESSING,
+            "complete": JobStatus.COMPLETED,
+            "not_found": JobStatus.FAILED,
+            "deferred": JobStatus.QUEUED
+        }
+        return status_mapping.get(arq_status, JobStatus.FAILED)
+
+    async def cancel_job(self, job_id: str) -> bool:
+        """Cancel an ARQ job."""
+        from dumpyarabot.arq_config import arq_pool
+
+        success = await arq_pool.cancel_job(job_id)
+
+        if success:
+            console.print(f"[green]Cancelled ARQ job {job_id}[/green]")
+        else:
+            console.print(f"[yellow]Could not cancel ARQ job {job_id}[/yellow]")
+
+        return success
+
+    async def get_job_queue_stats(self) -> Dict[str, Any]:
+        """Get ARQ queue statistics."""
+        from dumpyarabot.arq_config import arq_pool
+
+        arq_stats = await arq_pool.get_queue_stats()
+
+        # Convert to format expected by existing status commands
+        return {
+            "total_jobs": arq_stats.get("queue_length", 0),
+            "queued_jobs": arq_stats.get("queue_length", 0),
+            "active_workers": arq_stats.get("active_health_checks", 0),
+            "status_breakdown": {
+                "queued": arq_stats.get("queue_length", 0),
+                "processing": 0,  # ARQ doesn't provide this directly
+                "completed": 0,   # ARQ doesn't provide this directly
+                "failed": 0,      # ARQ doesn't provide this directly
+                "cancelled": 0    # ARQ doesn't provide this directly
+            },
+            "worker_keys": [],
+            "arq_stats": arq_stats  # Include raw ARQ stats for debugging
+        }
+
+    # Legacy methods (kept for backward compatibility during transition)
+    async def get_next_job(self, worker_id: str) -> Optional[DumpJob]:
+        """Legacy method - no longer used with ARQ workers."""
+        console.print(f"[yellow]get_next_job called but ARQ handles worker management[/yellow]")
+        return None
+
     async def update_job_status(
         self,
         job_id: str,
@@ -649,117 +663,9 @@ class MessageQueue:
         result_data: Optional[Dict[str, Any]] = None,
         job_data: Optional[DumpJob] = None
     ) -> bool:
-        """Update job status and progress."""
-        redis_client = await self._get_redis()
-        job_key = self._make_job_key(job_id)
-
-        # Use provided job_data or get from Redis
-        if job_data:
-            job = job_data
-        else:
-            job_json = await redis_client.get(job_key)
-            if not job_json:
-                console.print(f"[red]Job {job_id} not found for status update[/red]")
-                return False
-            job = DumpJob.model_validate_json(job_json)
-
-        # Update job fields
-        job.status = status
-        if progress:
-            from dumpyarabot.schemas import JobProgress
-            job.progress = JobProgress(**progress)
-        if error_details:
-            job.error_details = error_details
-        if result_data:
-            job.result_data = result_data
-
-        # Set completion time for terminal states
-        if status in [JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED]:
-            job.completed_at = datetime.utcnow()
-
-        # Save updated job
-        await redis_client.set(job_key, job.model_dump_json())
-
-        console.print(f"[blue]Updated job {job_id} status to {status.value}[/blue]")
+        """Legacy method - ARQ handles job status internally."""
+        console.print(f"[yellow]update_job_status called but ARQ manages job status internally[/yellow]")
         return True
-
-    async def get_job_status(self, job_id: str) -> Optional[DumpJob]:
-        """Get current status of a job."""
-        redis_client = await self._get_redis()
-        job_key = self._make_job_key(job_id)
-
-        job_json = await redis_client.get(job_key)
-        if not job_json:
-            return None
-
-        return DumpJob.model_validate_json(job_json)
-
-    async def cancel_job(self, job_id: str) -> bool:
-        """Cancel a job (if it's still queued or processing)."""
-        redis_client = await self._get_redis()
-        job_key = self._make_job_key(job_id)
-
-        # Get current job
-        job_json = await redis_client.get(job_key)
-        if not job_json:
-            console.print(f"[red]Job {job_id} not found for cancellation[/red]")
-            return False
-
-        job = DumpJob.model_validate_json(job_json)
-
-        # Only cancel if job is still cancellable
-        if job.status in [JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED]:
-            console.print(f"[yellow]Job {job_id} cannot be cancelled (status: {job.status.value})[/yellow]")
-            return False
-
-        # Update status
-        job.status = JobStatus.CANCELLED
-        job.completed_at = datetime.utcnow()
-        await redis_client.set(job_key, job.model_dump_json())
-
-        # If job is queued, remove from queue
-        if job.status == JobStatus.QUEUED:
-            job_queue_key = self._make_job_queue_key()
-            await redis_client.lrem(job_queue_key, 1, job_id)
-
-        console.print(f"[green]Cancelled job {job_id}[/green]")
-        return True
-
-    async def get_job_queue_stats(self) -> Dict[str, Any]:
-        """Get statistics about the job queue."""
-        redis_client = await self._get_redis()
-
-        # Count jobs in queue
-        job_queue_key = self._make_job_queue_key()
-        queued_count = await redis_client.llen(job_queue_key)
-
-        # Count jobs by status
-        status_counts = {status.value: 0 for status in JobStatus}
-
-        # Get all job keys
-        job_pattern = f"{settings.REDIS_KEY_PREFIX}job:*"
-        job_keys = await redis_client.keys(job_pattern)
-
-        total_jobs = len(job_keys)
-
-        for job_key in job_keys:
-            job_json = await redis_client.get(job_key)
-            if job_json:
-                job = DumpJob.model_validate_json(job_json)
-                status_counts[job.status.value] += 1
-
-        # Count active workers
-        worker_pattern = f"{settings.REDIS_KEY_PREFIX}worker:*"
-        worker_keys = await redis_client.keys(worker_pattern)
-        active_workers = len(worker_keys)
-
-        return {
-            "total_jobs": total_jobs,
-            "queued_jobs": queued_count,
-            "active_workers": active_workers,
-            "status_breakdown": status_counts,
-            "worker_keys": [key.decode() for key in worker_keys] if worker_keys else []
-        }
 
 
 # Global message queue instance

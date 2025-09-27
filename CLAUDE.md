@@ -10,17 +10,20 @@ This is **dumpyarabot**, a Telegram bot for AndroidDumps that integrates with Je
 
 ### Package Management
 ```bash
-# Install dependencies (uses uv for faster installs)
+# Install dependencies (includes ARQ for job processing)
 uv sync
-
-# Install job queue support for Telegram bot
-uv add "python-telegram-bot[job-queue]"
 
 # Run the application
 python -m dumpyarabot
 
-# Or directly
+# Run ARQ worker (for job processing)
+arq worker_settings.WorkerSettings
+# Or alternatively:
+# python run_arq_worker.py
+
+# Or directly with uv
 uv run python -m dumpyarabot
+uv run python run_arq_worker.py
 ```
 
 ### Development Workflow

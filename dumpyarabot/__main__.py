@@ -66,6 +66,19 @@ async def initialize_message_queue(context):
         console.print(f"[red]Failed to initialize message queue: {e}[/red]")
 
 
+async def initialize_arq(context):
+    """Initialize the ARQ system."""
+    from dumpyarabot.arq_config import init_arq
+    from rich.console import Console
+    console = Console()
+
+    try:
+        await init_arq()
+        console.print("[green]ARQ system initialized successfully[/green]")
+    except Exception as e:
+        console.print(f"[red]Failed to initialize ARQ: {e}[/red]")
+
+
 async def register_bot_commands(application):
     """Register bot commands with Telegram for the menu interface."""
     from dumpyarabot.config import USER_COMMANDS
@@ -124,14 +137,17 @@ if __name__ == "__main__":
 
     # Register bot commands on startup (if job queue is available)
     if application.job_queue:
-        # Initialize message queue system first
-        application.job_queue.run_once(initialize_message_queue, 0)
+        # Initialize ARQ system first
+        application.job_queue.run_once(initialize_arq, 0)
+
+        # Initialize message queue system
+        application.job_queue.run_once(initialize_message_queue, 1)
 
         application.job_queue.run_once(
-            lambda context: register_bot_commands(application), 1
+            lambda context: register_bot_commands(application), 2
         )
         # Handle post-restart message update
-        application.job_queue.run_once(handle_post_restart_update, 2)
+        application.job_queue.run_once(handle_post_restart_update, 3)
 
     application.run_polling()
 
